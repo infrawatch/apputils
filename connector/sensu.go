@@ -1,4 +1,4 @@
-package sensu
+package connector
 
 import (
 	"encoding/json"

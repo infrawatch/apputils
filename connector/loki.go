@@ -1,4 +1,4 @@
-package loki
+package connector
 
 import (
     "net/http"
