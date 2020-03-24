@@ -50,6 +50,10 @@ func TestLoki(t *testing.T) {
     }
     assert.Equal(t, client.IsReady(), true, "The client isn't ready")
 
+    defer func() {
+        client.Shutdown()
+    }()
+
 
     // push a whole batch
     t.Run("Test sending in batches", func(t *testing.T) {
@@ -57,6 +61,10 @@ func TestLoki(t *testing.T) {
         if err != nil {
             t.Fatalf("Failed to create loki client: %s", err)
         }
+        defer func() {
+            c.Shutdown()
+        }()
+
         currentTime := time.Duration(time.Now().UnixNano())
         for i := 0; i < batchSize; i++ {
             labels := make(map[string]string)
@@ -92,6 +100,10 @@ func TestLoki(t *testing.T) {
         if err != nil {
             t.Fatalf("Failed to create loki client: %s", err)
         }
+        defer func() {
+            c.Shutdown()
+        }()
+
         labels := make(map[string]string)
         labels["test"] = "single"
         labels["unique"] = testId
@@ -124,6 +136,10 @@ func TestLoki(t *testing.T) {
         if err != nil {
             t.Fatalf("Failed to create loki client: %s", err)
         }
+        defer func() {
+            c.Shutdown()
+        }()
+
         labels := make(map[string]string)
         labels["test"] = "multiple_in_a_stream"
         labels["unique"] = testId
