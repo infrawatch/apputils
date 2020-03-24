@@ -13,7 +13,7 @@ const QDRMsg = "{\"message\": \"smart gateway test\"}"
 
 func TestAMQP10SendAndReceiveMessage(t *testing.T) {
 	sender := connector.NewAMQPSender(QDRURL, true)
-	receiver := connector.NewAMQPServer(QDRURL, true, 1, 0, nil, "metrics-test")
+	receiver := connector.NewAMQPServer(QDRURL, true, 1, 0, "metrics-test")
 	ackChan := sender.GetAckChannel()
 	t.Run("Test receive", func(t *testing.T) {
 		t.Parallel()

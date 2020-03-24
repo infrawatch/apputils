@@ -25,7 +25,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/prometheus/client_golang/prometheus"
 	"qpid.apache.org/amqp"
 	"qpid.apache.org/electron"
 )
@@ -43,24 +42,13 @@ type AMQPServer struct {
 	connection      electron.Connection
 	method          func(s *AMQPServer) (electron.Receiver, error)
 	prefetch        int
-	amqpHandler     *AMQPHandler
 	uniqueName      string
 	reconnect       bool
 	collectinterval float64
 }
 
-//AMQPHandler ...
-type AMQPHandler struct {
-	totalCount              int
-	totalProcessed          int
-	totalReconnectCount     int
-	totalCountDesc          *prometheus.Desc
-	totalProcessedDesc      *prometheus.Desc
-	totalReconnectCountDesc *prometheus.Desc
-}
-
 //NewAMQPServer   ...
-func NewAMQPServer(urlStr string, debug bool, msgcount int, prefetch int, amqpHanlder *AMQPHandler, uniqueName string) *AMQPServer {
+func NewAMQPServer(urlStr string, debug bool, msgcount int, prefetch int, uniqueName string) *AMQPServer {
 	if len(urlStr) == 0 {
 		log.Println("No URL provided")
 		//usage()
@@ -75,7 +63,6 @@ func NewAMQPServer(urlStr string, debug bool, msgcount int, prefetch int, amqpHa
 		msgcount:        msgcount,
 		method:          (*AMQPServer).connect,
 		prefetch:        prefetch,
-		amqpHandler:     amqpHanlder,
 		uniqueName:      uniqueName,
 		reconnect:       false,
 		collectinterval: 30,
@@ -91,78 +78,6 @@ func NewAMQPServer(urlStr string, debug bool, msgcount int, prefetch int, amqpHa
 	go server.start()
 
 	return server
-}
-
-//GetHandler  ...
-func (s *AMQPServer) GetHandler() *AMQPHandler {
-	return s.amqpHandler
-}
-
-//NewAMQPHandler  ...
-func NewAMQPHandler(source string) *AMQPHandler {
-	plabels := prometheus.Labels{}
-	plabels["source"] = source
-	return &AMQPHandler{
-		totalCount:          0,
-		totalProcessed:      0,
-		totalReconnectCount: 0,
-		totalCountDesc: prometheus.NewDesc("collectd_total_amqp_message_recv_count",
-			"Total count of amqp message received.",
-			nil, plabels,
-		),
-		totalProcessedDesc: prometheus.NewDesc("collectd_total_amqp_processed_message_count",
-			"Total count of amqp message processed.",
-			nil, plabels,
-		),
-		totalReconnectCountDesc: prometheus.NewDesc("collectd_total_amqp_reconnect_count",
-			"Total count of amqp reconnection .",
-			nil, plabels,
-		),
-	}
-}
-
-//IncTotalMsgRcv ...
-func (a *AMQPHandler) IncTotalMsgRcv() {
-	a.totalCount++
-}
-
-//IncTotalMsgProcessed ...
-func (a *AMQPHandler) IncTotalMsgProcessed() {
-	a.totalProcessed++
-}
-
-//IncTotalReconnectCount ...
-func (a *AMQPHandler) IncTotalReconnectCount() {
-	a.totalReconnectCount++
-}
-
-//GetTotalMsgRcv ...
-func (a *AMQPHandler) GetTotalMsgRcv() int {
-	return a.totalCount
-}
-
-//GetTotalMsgProcessed ...
-func (a *AMQPHandler) GetTotalMsgProcessed() int {
-	return a.totalProcessed
-}
-
-//GetTotalReconnectCount ...
-func (a *AMQPHandler) GetTotalReconnectCount() int {
-	return a.totalReconnectCount
-}
-
-//Describe ...
-func (a *AMQPHandler) Describe(ch chan<- *prometheus.Desc) {
-	ch <- a.totalCountDesc
-	ch <- a.totalProcessedDesc
-	ch <- a.totalReconnectCountDesc
-}
-
-//Collect implements prometheus.Collector.
-func (a *AMQPHandler) Collect(ch chan<- prometheus.Metric) {
-	ch <- prometheus.MustNewConstMetric(a.totalCountDesc, prometheus.CounterValue, float64(a.totalCount))
-	ch <- prometheus.MustNewConstMetric(a.totalProcessedDesc, prometheus.CounterValue, float64(a.totalProcessed))
-	ch <- prometheus.MustNewConstMetric(a.totalReconnectCountDesc, prometheus.CounterValue, float64(a.totalReconnectCount))
 }
 
 //GetNotifier  Get notifier
@@ -247,10 +162,6 @@ msgloop:
 			break msgloop
 		case m := <-messages:
 			debugr("Message received... %v\n", m.Body())
-			handler := s.GetHandler()
-			if handler != nil {
-				handler.IncTotalMsgRcv()
-			}
 			switch msg := m.Body().(type) {
 			case amqp.Binary:
 				s.notifier <- msg.String()
