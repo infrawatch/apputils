@@ -44,7 +44,7 @@ func TestLoki(t *testing.T) {
     testId := strconv.FormatInt(time.Now().UnixNano(), 16)
     url := strings.Join([]string{server, port}, ":")
 
-    client, err := connector.CreateClient(url, batchSize, maxWaitTime)
+    client, err := connector.NewLokiConnector(url, batchSize, maxWaitTime)
     if err != nil {
         t.Fatalf("Failed to create loki client: %s", err)
     }
@@ -57,10 +57,11 @@ func TestLoki(t *testing.T) {
 
     // push a whole batch
     t.Run("Test sending in batches", func(t *testing.T) {
-        c, err := connector.CreateClient(url, batchSize, 10 * time.Second)
+        c, err := connector.NewLokiConnector(url, batchSize, 10 * time.Second)
         if err != nil {
             t.Fatalf("Failed to create loki client: %s", err)
         }
+        c.Start()
         defer func() {
             c.Shutdown()
         }()
@@ -96,10 +97,11 @@ func TestLoki(t *testing.T) {
 
     // push just one message and wait for the maxWaitTime to pass
     t.Run("Test waiting for maxWaitTime to pass", func(t *testing.T) {
-        c, err := connector.CreateClient(url, batchSize, maxWaitTime)
+        c, err := connector.NewLokiConnector(url, batchSize, maxWaitTime)
         if err != nil {
             t.Fatalf("Failed to create loki client: %s", err)
         }
+        c.Start()
         defer func() {
             c.Shutdown()
         }()
@@ -132,10 +134,11 @@ func TestLoki(t *testing.T) {
 
     // test sending multiple messages in a single stream
     t.Run("Test sending multiple messages in a single stream", func(t *testing.T) {
-        c, err := connector.CreateClient(url, batchSize, maxWaitTime)
+        c, err := connector.NewLokiConnector(url, batchSize, maxWaitTime)
         if err != nil {
             t.Fatalf("Failed to create loki client: %s", err)
         }
+        c.Start()
         defer func() {
             c.Shutdown()
         }()
