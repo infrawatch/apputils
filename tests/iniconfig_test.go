@@ -8,8 +8,8 @@ import (
 	"path"
 	"testing"
 
-	"github.com/paramite/collectd-sensubility/config"
-	"github.com/paramite/collectd-sensubility/logging"
+	"github.com/infrawatch/apputils/config"
+	"github.com/infrawatch/apputils/logging"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -28,9 +28,9 @@ BoolValidator=no-way
 OptionsValidator=foo
 `
 
-type validatorTest struct {
-	parameter string
-	validator config.Validator
+type ValidatorTest struct {
+	Parameter string
+	Validator config.Validator
 	defValue  string
 }
 
@@ -60,27 +60,34 @@ func TestConfigValues(t *testing.T) {
 	}
 	defer log.Destroy()
 
-	metadata := config.GetAgentConfigMetadata()
-	conf, err := config.NewConfig(metadata, log)
-	if err != nil {
-		t.Fatal(err)
+	metadata := map[string][]config.Parameter{
+		"default": []config.Parameter{
+			config.Parameter{Name: "log_file", Tag: "", Default: "/var/log/collectd-sensubility.log", Validators: []config.Validator{}},
+			config.Parameter{Name: "log_level", Tag: "", Default: "INFO", Validators: []config.Validator{config.StringOptionsValidatorFactory([]string{"DEBUG", "INFO", "WARNING", "ERROR"})}},
+			config.Parameter{Name: "allow_exec", Tag: "", Default: true, Validators: []config.Validator{config.BoolValidatorFactory()}},
+		},
+		"amqp1": []config.Parameter{
+			config.Parameter{Name: "host", Tag: "", Default: "localhost", Validators: []config.Validator{}},
+			config.Parameter{Name: "port", Tag: "", Default: 5666, Validators: []config.Validator{config.IntValidatorFactory()}},
+			config.Parameter{Name: "user", Tag: "", Default: "guest", Validators: []config.Validator{}},
+			config.Parameter{Name: "password", Tag: "", Default: "guest", Validators: []config.Validator{}},
+		},
 	}
+	conf := config.NewINIConfig(metadata, log)
 	err = conf.Parse(file.Name())
 	if err != nil {
 		t.Fatal(err)
 	}
 	// test parsed sections
 	sections := []string{}
-	for key, _ := range conf.Sections {
+	for key := range conf.Sections {
 		sections = append(sections, key)
 	}
-	assert.ElementsMatch(t, []string{"default", "sensu", "amqp1"}, sections)
-	// test default values
-	assert.Equal(t, []string{"all", "default"}, conf.Sections["sensu"].Options["subscriptions"].GetStrings(","))
+	assert.ElementsMatch(t, []string{"default", "amqp1"}, sections)
 	// test parsed overrided values
 	assert.Equal(t, "/var/tmp/test.log", conf.Sections["default"].Options["log_file"].GetString(), "Did not parse correctly")
 	assert.Equal(t, false, conf.Sections["default"].Options["allow_exec"].GetBool(), "Did not parse correctly")
-	assert.Equal(t, 666, conf.Sections["amqp1"].Options["port"].GetInt(), "Did not parse correctly")
+	assert.Equal(t, int64(666), conf.Sections["amqp1"].Options["port"].GetInt(), "Did not parse correctly")
 	os.Remove(file.Name())
 }
 
@@ -110,33 +117,33 @@ func TestValidators(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// test failing parsing (each validator separately)
-	tests := []validatorTest{
-		validatorTest{"IntValidator", config.IntValidatorFactory(), "3"},
-		validatorTest{"MultiIntValidator", config.MultiIntValidatorFactory(","), "1,2"},
-		validatorTest{"BoolValidator", config.BoolValidatorFactory(), "true"},
-		validatorTest{"OptionsValidator", config.OptionsValidatorFactory([]string{"bar", "baz"}), "bar"},
+	// test failing parsing (each config.Validator separately)
+	tests := []ValidatorTest{
+		ValidatorTest{"IntValidator", config.IntValidatorFactory(), "3"},
+		ValidatorTest{"MultiIntValidator", config.MultiIntValidatorFactory(","), "1,2"},
+		ValidatorTest{"BoolValidator", config.BoolValidatorFactory(), "true"},
+		ValidatorTest{"OptionsValidator", config.StringOptionsValidatorFactory([]string{"bar", "baz"}), "bar"},
 	}
 	for _, test := range tests {
 		metadata := map[string][]config.Parameter{
 			"invalid": []config.Parameter{
-				config.Parameter{test.parameter, test.defValue, []config.Validator{test.validator}},
+				config.Parameter{Name: test.Parameter, Tag: "", Default: test.defValue, Validators: []config.Validator{test.Validator}},
 			},
 		}
-		conf, err := config.NewConfig(metadata, log)
+		conf := config.NewINIConfig(metadata, log)
 		err = conf.Parse(file.Name())
 		if err == nil {
-			t.Errorf("Failed to report validation error with %s.", test.parameter)
+			t.Errorf("Failed to report validation error with %s.", test.Parameter)
 		}
 	}
 	// test failing constructor (validation of default values)
 	metadata := map[string][]config.Parameter{
 		"invalid": []config.Parameter{
-			config.Parameter{"default_test", "default", []config.Validator{config.IntValidatorFactory()}},
+			config.Parameter{Name: "default_test", Tag: "", Default: "default", Validators: []config.Validator{config.IntValidatorFactory()}},
 		},
 	}
-	_, err = config.NewConfig(metadata, log)
-	if err == nil {
+	conf := config.NewINIConfig(metadata, log)
+	if err = conf.Parse(file.Name()); err == nil {
 		t.Errorf("Failed to report validation error in constructor.")
 	}
 	os.Remove(file.Name())
