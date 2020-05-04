@@ -21,41 +21,36 @@ package connector
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"strings"
+
+	"github.com/infrawatch/apputils/logging"
 
 	"qpid.apache.org/amqp"
 	"qpid.apache.org/electron"
 )
 
-var debugsf = func(format string, data ...interface{}) {} // Default no debugging output
-
 //AMQPSender msgcount -1 is infinite
 type AMQPSender struct {
 	urlStr      string
-	debug       bool
 	connections chan electron.Connection
 	acks        chan electron.Outcome
+	debug       bool
+	logger      *logging.Logger
 }
 
 //NewAMQPSender   ...
-func NewAMQPSender(urlStr string, debug bool) *AMQPSender {
+func NewAMQPSender(urlStr string, debug bool, logger *logging.Logger) *AMQPSender {
 	if len(urlStr) == 0 {
-		log.Println("No URL provided")
-		//usage()
+		logger.Error("No URL provided")
 		os.Exit(1)
 	}
 	server := &AMQPSender{
 		urlStr:      urlStr,
-		debug:       debug,
 		connections: make(chan electron.Connection, 1),
 		acks:        make(chan electron.Outcome),
-	}
-	// Spawn off the server's main loop immediately
-	// not exported
-	if debug {
-		debugsf = func(format string, data ...interface{}) { log.Printf(format, data...) }
+		debug:       debug,
+		logger:      logger,
 	}
 
 	return server
@@ -65,7 +60,10 @@ func NewAMQPSender(urlStr string, debug bool) *AMQPSender {
 func (as *AMQPSender) Close() {
 	c := <-as.connections
 	c.Close(nil)
-	debugsf("Debug: close sender connection %s", c)
+	as.logger.Metadata(map[string]interface{}{
+		"connection": c,
+	})
+	as.logger.Debug("close sender connection")
 }
 
 // GetAckChannel returns electron.Outcome channel for receiving ACK when debug mode is turned on
@@ -75,23 +73,26 @@ func (as *AMQPSender) GetAckChannel() chan electron.Outcome {
 
 //Send  starts amqp server
 func (as *AMQPSender) Send(jsonmsg string) {
-	debugsf("Debug: AMQP send is invoked")
+	as.logger.Debug("AMQP send is invoked")
 	go func(body string) {
 		container := electron.NewContainer(fmt.Sprintf("send[%v]", os.Getpid()))
 		url, err := amqp.ParseURL(as.urlStr)
-		fatalsIf(err)
+		fatalsIf(err, as.logger)
 		c, err := container.Dial("tcp", url.Host) // NOTE: Dial takes just the Host part of the URL
-		fatalsIf(err)
+		fatalsIf(err, as.logger)
 		as.connections <- c // Save connection so we can Close() when start() ends
 		addr := strings.TrimPrefix(url.Path, "/")
 		s, err := c.Sender(electron.Target(addr))
-		fatalsIf(err)
+		fatalsIf(err, as.logger)
 
 		m := amqp.NewMessage()
 		m.SetContentType("application/json")
 		m.Marshal(body)
 
-		debugsf("Debug:Sending alerts on a bus URL %s\n", body)
+		as.logger.Metadata(map[string]interface{}{
+			"body": body,
+		})
+		as.logger.Debug("Sending alerts on a bus URL")
 
 		if as.debug {
 			s.SendAsync(m, as.acks, "smart-gateway-ack")
@@ -102,8 +103,11 @@ func (as *AMQPSender) Send(jsonmsg string) {
 	}(jsonmsg)
 }
 
-func fatalsIf(err error) {
+func fatalsIf(err error, logger *logging.Logger) {
 	if err != nil {
-		log.Fatal(err)
+		logger.Metadata(map[string]interface{}{
+			"error": err,
+		})
+		logger.Error("Error occured")
 	}
 }
