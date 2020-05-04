@@ -117,6 +117,13 @@ func (client *LokiClient) Start() {
     }()
 }
 
+func (client *LokiClient) SendLog(labels map[string]string, message string, timestamp time.Duration) {
+    m := Message {
+        Message: message,
+        Time: timestamp,
+    }
+    client.AddStream(labels, []Message{m})
+}
 
 // The template for the message sent to Loki is:
 //{
