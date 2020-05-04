@@ -54,10 +54,20 @@ func (opt *Option) GetInts(separator string) []int {
 	return output
 }
 
+//GetFLoat returns option value as float.
+func (opt *Option) GetFloat() float64 {
+	val := reflect.ValueOf(opt.value)
+	return val.Float()
+}
+
 //GetBool returns option value as bool.
 func (opt *Option) GetBool() bool {
 	val := reflect.ValueOf(opt.value)
 	return val.Bool()
+}
+
+func (opt *Option) GetStructured() interface{} {
+	return opt.value
 }
 
 //Config interface for methods to accept various types of config objects (INI/JSON/...)
