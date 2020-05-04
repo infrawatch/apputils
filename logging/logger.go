@@ -51,18 +51,18 @@ func (self *Logger) Metadata(metadata map[string]interface{}) {
 }
 
 func(self *Logger) SetLogLevel(level LogLevel) {
-    self.Level = level
+	self.Level = level
 }
 
-func(self *Logger) SetFile(path string) error {
-    newLogfile, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
-    if err != nil {
-        self.Warn("Couldn't open new log file, leaving the old one")
-        return err
-    }
-    self.logfile.Close()
-    self.logfile = newLogfile
-    return nil
+func(self *Logger) SetFile(path string, permissions os.FileMode) error {
+	newLogfile, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_APPEND, permissions)
+	if err != nil {
+		self.Warn("Couldn't open new log file, leaving the old one")
+		return err
+	}
+	self.logfile.Close()
+	self.logfile = newLogfile
+	return nil
 }
 
 func (self *Logger) formatMetadata() (string, error) {
