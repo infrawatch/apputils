@@ -6,17 +6,26 @@ import (
     "time"
     "strings"
     "strconv"
+	"os"
 
     "github.com/stretchr/testify/assert"
     "github.com/infrawatch/apputils/connector"
+    "github.com/infrawatch/apputils/logging"
 )
 
 const QDRURL = "amqp://127.0.0.1:5672/collectd/telemetry"
 const QDRMsg = "{\"message\": \"smart gateway test\"}"
+const logpath = "/dev/stderr"
 
 func TestAMQP10SendAndReceiveMessage(t *testing.T) {
-	sender := connector.NewAMQPSender(QDRURL, true)
-	receiver := connector.NewAMQPServer(QDRURL, true, 1, 0, "metrics-test")
+	logger, err := logging.NewLogger(logging.DEBUG, logpath)
+	if err != nil {
+		fmt.Printf("Failed to open log file %s.\n", logpath)
+		os.Exit(2)
+	}
+	defer logger.Destroy()
+	sender := connector.NewAMQPSender(QDRURL, true, logger)
+	receiver := connector.NewAMQPServer(QDRURL, 1, 0, "metrics-test", logger)
 	ackChan := sender.GetAckChannel()
 	t.Run("Test receive", func(t *testing.T) {
 		t.Parallel()

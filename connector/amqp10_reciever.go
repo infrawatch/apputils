@@ -21,58 +21,51 @@ package connector
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"strings"
+
+	"github.com/infrawatch/apputils/logging"
 
 	"qpid.apache.org/amqp"
 	"qpid.apache.org/electron"
 )
 
-var debugr = func(format string, data ...interface{}) {} // Default no debugging output
-
 //AMQPServer msgcount -1 is infinite
 type AMQPServer struct {
-	urlStr          string
-	debug           bool
-	msgcount        int
-	notifier        chan string
-	status          chan int
-	done            chan bool
-	connection      electron.Connection
-	method          func(s *AMQPServer) (electron.Receiver, error)
-	prefetch        int
-	uniqueName      string
-	reconnect       bool
+	urlStr			string
+	msgcount		int
+	notifier		chan string
+	status			chan int
+	done			chan bool
+	connection		electron.Connection
+	method			func(s *AMQPServer) (electron.Receiver, error)
+	prefetch		int
+	uniqueName		string
+	reconnect		bool
 	collectinterval float64
+	logger			*logging.Logger
 }
 
 //NewAMQPServer   ...
-func NewAMQPServer(urlStr string, debug bool, msgcount int, prefetch int, uniqueName string) *AMQPServer {
+func NewAMQPServer(urlStr string, msgcount int, prefetch int, uniqueName string, logger *logging.Logger) *AMQPServer {
 	if len(urlStr) == 0 {
-		log.Println("No URL provided")
-		//usage()
+		logger.Error("No URL provided")
 		os.Exit(1)
 	}
 	server := &AMQPServer{
-		urlStr:          urlStr,
-		debug:           debug,
-		notifier:        make(chan string),
-		status:          make(chan int),
-		done:            make(chan bool),
-		msgcount:        msgcount,
-		method:          (*AMQPServer).connect,
-		prefetch:        prefetch,
-		uniqueName:      uniqueName,
-		reconnect:       false,
+		urlStr:			 urlStr,
+		notifier:		 make(chan string),
+		status:			 make(chan int),
+		done:			 make(chan bool),
+		msgcount:		 msgcount,
+		method:			 (*AMQPServer).connect,
+		prefetch:		 prefetch,
+		uniqueName:		 uniqueName,
+		reconnect:		 false,
 		collectinterval: 30,
+		logger:			 logger,
 	}
 
-	if debug {
-		debugr = func(format string, data ...interface{}) {
-			log.Printf(format, data...)
-		}
-	}
 	// Spawn off the server's main loop immediately
 	// not exported
 	go server.start()
@@ -98,7 +91,10 @@ func (s *AMQPServer) GetDoneChan() chan bool {
 //Close connections it is exported so users can force close
 func (s *AMQPServer) Close() {
 	s.connection.Close(nil)
-	debugr("Debug: close receiver connection %s", s.connection)
+	s.logger.Metadata(map[string]interface{}{
+		"connection": s.connection,
+	})
+	s.logger.Debug("Close receiver connection")
 }
 
 //UpdateMinCollectInterval ...
@@ -125,7 +121,10 @@ func (s *AMQPServer) start() {
 	go func() {
 		r, err := s.method(s)
 		if err != nil {
-			log.Fatalf("Could not connect to Qpid-dispatch router. is it running? : %v", err)
+			s.logger.Metadata(map[string]interface{}{
+				"error": err,
+			})
+			s.logger.Error("Could not connect to Qpid-dispatch router. is it running?")
 		}
 		connectionStatus <- 1
 		untilCount := s.msgcount
@@ -133,13 +132,20 @@ func (s *AMQPServer) start() {
 		for {
 			if rm, err := r.Receive(); err == nil {
 				rm.Accept()
-				debugr("Message ACKed: %v", rm.Message)
+				s.logger.Metadata(map[string]interface{}{
+					"message": rm.Message,
+				})
+				s.logger.Debug("Message ACKed")
 				messages <- rm.Message
 			} else if err == electron.Closed {
-				log.Printf("Channel closed...\n")
+				s.logger.Info("Channel closed...")
 				return
 			} else {
-				log.Fatalf("Received error %v: %v", s.urlStr, err)
+				s.logger.Metadata(map[string]interface{}{
+					"URL": s.urlStr,
+					"error": err,
+				})
+				s.logger.Error("Received error")
 			}
 			if untilCount > 0 {
 				untilCount--
@@ -151,17 +157,20 @@ func (s *AMQPServer) start() {
 		done <- true
 		s.done <- true
 		s.Close()
-		log.Println("Closed AMQP...letting loop know")
+		s.logger.Info("Closed AMQP...letting loop know")
 	}()
 
 msgloop:
 	for {
 		select {
 		case <-done:
-			debugr("Done received...\n")
+			s.logger.Debug("Done received...")
 			break msgloop
 		case m := <-messages:
-			debugr("Message received... %v\n", m.Body())
+			s.logger.Metadata(map[string]interface{}{
+				"Message": m.Body(),
+			})
+			s.logger.Debug("Message received...")
 			switch msg := m.Body().(type) {
 			case amqp.Binary:
 				s.notifier <- msg.String()
@@ -169,10 +178,13 @@ msgloop:
 				s.notifier <- msg
 			default:
 				// do nothing and report
-				log.Printf("Invalid type of AMQP message received: %t", msg)
+				s.logger.Metadata(map[string]interface{}{
+					"Message": msg,
+				})
+				s.logger.Info("Invalid type of AMQP message received")
 			}
 		case status := <-connectionStatus:
-			debugr("Status received...\n")
+			s.logger.Debug("Status received...")
 			s.status <- status
 		}
 	}
@@ -184,10 +196,19 @@ func (s *AMQPServer) connect() (electron.Receiver, error) {
 	// Make name unique-ish
 	container := electron.NewContainer(fmt.Sprintf("rcv[%v]", s.uniqueName))
 	url, err := amqp.ParseURL(s.urlStr)
-	fatalIf(err)
+	if err != nil {
+		s.logger.Metadata(map[string]interface{}{
+			"error": err,
+			"url": s.urlStr,
+		})
+		s.logger.Error("Error while parsing amqp url")
+	}
 	c, err := container.Dial("tcp", url.Host) // NOTE: Dial takes just the Host part of the URL
 	if err != nil {
-		log.Printf("AMQP Dial tcp %v\n", err)
+		s.logger.Metadata(map[string]interface{}{
+			"error": err,
+		})
+		s.logger.Error("AMQP Dial tcp error")
 		return nil, err
 	}
 
@@ -196,7 +217,10 @@ func (s *AMQPServer) connect() (electron.Receiver, error) {
 	addr := strings.TrimPrefix(url.Path, "/")
 	opts := []electron.LinkOption{electron.Source(addr)}
 	if s.prefetch > 0 {
-		debugr("Amqp Prefetch set to %d\n", s.prefetch)
+		s.logger.Metadata(map[string]interface{}{
+			"prefetch": s.prefetch,
+		})
+		s.logger.Debug("Amqp Prefetch set to:")
 		opts = append(opts, electron.Capacity(s.prefetch), electron.Prefetch(true))
 	}
 
@@ -204,8 +228,3 @@ func (s *AMQPServer) connect() (electron.Receiver, error) {
 	return r, err
 }
 
-func fatalIf(err error) {
-	if err != nil {
-		log.Fatal(err)
-	}
-}
