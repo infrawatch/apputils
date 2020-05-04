@@ -26,7 +26,7 @@ func BoolValidatorFactory() Validator {
 	return func(input interface{}) (interface{}, error) {
 		switch reflect.TypeOf(input).Kind() {
 		case reflect.Bool:
-			return reflect.ValueOf(input).Elem(), nil
+			return input, nil
 		case reflect.String:
 			val, err := strconv.ParseBool(input.(string))
 			if err == nil {
@@ -53,6 +53,8 @@ func IntValidatorFactory() Validator {
 			fallthrough
 		case reflect.Int64:
 			return reflect.ValueOf(input).Elem(), nil
+		case reflect.Float64:
+			return int64(input.(float64)), nil
 		case reflect.String:
 			val, err := strconv.ParseInt(input.(string), 10, 64)
 			if err == nil {

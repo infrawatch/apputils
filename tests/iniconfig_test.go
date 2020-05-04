@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-var CONFIG_CONTENT = `
+var IniConfigContent = `
 [default]
 log_file=/var/tmp/test.log
 allow_exec=false
@@ -34,7 +34,7 @@ type ValidatorTest struct {
 	defValue  string
 }
 
-func TestConfigValues(t *testing.T) {
+func TestINIConfigValues(t *testing.T) {
 	// create temporary config file
 	tmpdir, err := ioutil.TempDir(".", "config_test")
 	if err != nil {
@@ -47,7 +47,7 @@ func TestConfigValues(t *testing.T) {
 		t.Fatal(err)
 	}
 	// save test content
-	file.WriteString(CONFIG_CONTENT)
+	file.WriteString(IniConfigContent)
 	err = file.Close()
 	if err != nil {
 		t.Fatal(err)
@@ -112,7 +112,7 @@ func TestValidators(t *testing.T) {
 	defer log.Destroy()
 
 	// save test content
-	file.WriteString(CONFIG_CONTENT)
+	file.WriteString(IniConfigContent)
 	err = file.Close()
 	if err != nil {
 		t.Fatal(err)
