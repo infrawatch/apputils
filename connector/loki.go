@@ -2,6 +2,7 @@ package connector
 
 import (
 	"net/http"
+	"net/url"
 	"io/ioutil"
 	"encoding/json"
 	"bytes"
@@ -62,7 +63,7 @@ func NewLokiConnector(url string, maxBatch int, maxWaitTime time.Duration) (*Lok
 		streams: make(chan *jsonStream),
 		endpoints: endpoints {
 			push: "/loki/api/v1/push",
-			query: "/loki/api/v1/query",
+			query: "/loki/api/v1/query_range",
 			ready: "/ready",
 		},
 	}
@@ -191,8 +192,18 @@ type returnedJSON struct {
 // Queries the server. The queryString is expected to be in the
 // LogQL format described here:
 // https://github.com/grafana/loki/blob/master/docs/logql.md
-func (client *LokiClient) Query(queryString string) ([]Message, error) {
-	response, err := http.Get(client.url + client.endpoints.query + "?query=" + queryString)
+//
+// startTime is a Unix epoch determining from which time should
+// loki be looking for logs
+//
+// limit determines how many logs to return at most
+func (client *LokiClient) Query(queryString string, startTime time.Duration, limit int) ([]Message, error) {
+	params := url.Values{}
+	params.Add("query", queryString)
+	params.Add("start", strconv.FormatInt(startTime.Nanoseconds(), 10))
+	params.Add("limit", strconv.Itoa(limit))
+	url := client.url + client.endpoints.query + "?" + params.Encode()
+	response, err := http.Get(url)
 
 	body, err := ioutil.ReadAll(response.Body)
 	if err != nil {

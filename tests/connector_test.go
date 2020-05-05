@@ -92,7 +92,7 @@ func TestLoki(t *testing.T) {
 
         // query it back
         queryString := "{test=\"batch\",unique=\"" + testId + "\"}"
-        answer, err := c.Query(queryString)
+        answer, err := c.Query(queryString, 0, batchSize)
         if err != nil {
             t.Fatalf("Couldn't query loki after batch push: %s", err)
         }
@@ -129,7 +129,7 @@ func TestLoki(t *testing.T) {
 
         // query it back
         queryString := "{test=\"single\",unique=\"" + testId + "\"}"
-        answer, err := c.Query(queryString)
+        answer, err := c.Query(queryString, 0, batchSize)
         if err != nil {
             t.Fatalf("Couldn't query loki after testing maxWaitTime: %s", err)
         }
@@ -169,7 +169,7 @@ func TestLoki(t *testing.T) {
 
         // query it back
         queryString := "{test=\"multiple_in_a_stream\",unique=\"" + testId + "\"}"
-        answer, err := c.Query(queryString)
+        answer, err := c.Query(queryString, 0, batchSize)
         if err != nil {
             t.Fatalf("Couldn't query loki after pushing multiple messages in a stream: %s", err)
         }
