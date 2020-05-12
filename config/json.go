@@ -41,7 +41,7 @@ func NewJSONConfig(metadata map[string][]Parameter, logger *logging.Logger) *JSO
 	conf := JSONConfig{
 		WithConfigBase: WithConfigBase{log: logger, metadata: metadata, Sections: make(map[string]*Section)},
 		flat:           reflect.New(reflect.StructOf(sections)).Elem(),
-		structured:     make(map[string][]reflect.StructField, 0),
+		structured:     make(map[string][]reflect.StructField),
 	}
 	return &conf
 }
@@ -104,57 +104,34 @@ func (conf *JSONConfig) Parse(path string) error {
 	}
 
 	// parse structured parameters
-	//TODO
-	/*
-		parsed := make(map[string]interface{})
-		if err := json.Unmarshal(data, &parsed); err != nil {
-			conf.log.Metadata(map[string]interface{}{
-				"error": err,
-			})
-			conf.log.Error("unable to parse data from provided configuration file")
-			return err
+	sections := []reflect.StructField{}
+	for sect, params := range conf.structured {
+		sections = append(sections,
+			reflect.StructField{
+				Name: sect,
+				Type: reflect.StructOf(params),
+			},
+		)
+	}
+	parsed := reflect.New(reflect.StructOf(sections)).Interface()
+
+	if err := json.Unmarshal(data, parsed); err != nil {
+		conf.log.Metadata(map[string]interface{}{
+			"error": err,
+		})
+		conf.log.Error("unable to parse data from provided configuration file")
+		return err
+	}
+
+	parsedSections := reflect.ValueOf(parsed).Elem()
+	for section, params := range conf.structured {
+		if _, ok := conf.Sections[section]; !ok {
+			conf.Sections[section] = &Section{Options: make(map[string]*Option)}
 		}
-
-		for section, params := range conf.structured {
-			if _, ok := conf.Sections[section]; !ok {
-				conf.Sections[section] = &Section{Options: make(map[string]*Option)}
-			}
-			for _, param := range params {
-
-
-				conf.Sections[section].Options[param.Name] = parsed[section][param.Name])
+		sect := parsedSections.FieldByName(section)
+		for _, param := range params {
+			conf.Sections[section].Options[param.Name] = &Option{value: sect.FieldByName(param.Name).Interface()}
 		}
-
-		/*
-			sections := []reflect.StructField{}
-			for sect, params := range conf.structured {
-				sections = append(sections,
-					reflect.StructField{
-						Name: sect,
-						Type: reflect.StructOf(params),
-					},
-				)
-			}
-			var sectObj interface{}
-			sectObj = reflect.New(reflect.StructOf(sections))
-
-			if err := json.Unmarshal(data, &sectObj); err != nil {
-				conf.log.Metadata(map[string]interface{}{
-					"error": err,
-				})
-				conf.log.Error("unable to parse data from provided configuration file")
-				return err
-			}
-				structured := &sectObj
-					for section, params := range conf.structured {
-						if _, ok := conf.Sections[section]; !ok {
-							conf.Sections[section] = &Section{Options: make(map[string]*Option)}
-						}
-						sect := structured.FieldByName(section)
-						for _, param := range params {
-							field := sect.FieldByName(param.Name)
-							conf.Sections[section].Options[param.Name] = &Option{value: field}
-						}
-					}*/
+	}
 	return nil
 }

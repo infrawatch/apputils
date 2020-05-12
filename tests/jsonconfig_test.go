@@ -104,21 +104,21 @@ func TestJSONConfigValues(t *testing.T) {
 		assert.Equal(t, float64(5.5), conf.Sections["Amqp1"].Options["Float"].GetFloat(), "Did not parse correctly")
 	})
 
-	/*
-		t.Run("Test parsed structured values from JSON configuration file", func(t *testing.T) {
-			conf := config.NewJSONConfig(JSONConfigMetadata, log)
+	t.Run("Test parsed structured values from JSON configuration file", func(t *testing.T) {
+		conf := config.NewJSONConfig(JSONConfigMetadata, log)
 
-			var connections OuterTestObject
-			conf.AddStructured("Amqp1", "Connections", `json:"connections"`, connections)
+		var connections OuterTestObject
+		conf.AddStructured("Amqp1", "Connections", `json:"connections"`, connections)
 
-			err = conf.Parse(file.Name())
-			if err != nil {
-				t.Fatal(err)
-			}
-			// test parsed overrided values
-			connObj := conf.Sections["Amqp1"].Options["Connections"].GetStructured()
-			fmt.Printf("-----%T <> %v\n", connObj, connObj)
-
-			//assert.Equal(t, "woobalooba", connObj.(*OuterTestObject).Test, "Did not parse correctly")
-		})*/
+		err = conf.Parse(file.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		// test parsed values
+		connObj := conf.Sections["Amqp1"].Options["Connections"].GetStructured()
+		connTypedObj := connObj.(OuterTestObject)
+		assert.Equal(t, "woobalooba", connTypedObj.Test, "Did not parse correctly")
+		parsedConnections := []InnerTestObject{InnerTestObject{"test1", "booyaka"}, InnerTestObject{"test2", "foobar"}}
+		assert.Equal(t, parsedConnections, connTypedObj.Connections, "Did not parse correctly")
+	})
 }
