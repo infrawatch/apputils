@@ -21,7 +21,7 @@ func NewINIConfig(metadata map[string][]Parameter, logger *logging.Logger) *INIC
 }
 
 //Parse loads data from given file
-func (conf *INIConfig) Parse(path string) error {
+func (conf INIConfig) Parse(path string) error {
 	options := ini.LoadOptions{
 		AllowPythonMultilineValues: true,
 		IgnoreInlineComment:        true,
@@ -52,11 +52,11 @@ func (conf *INIConfig) Parse(path string) error {
 }
 
 //GetOption returns Option objects according to given "section-name/option-name" string.
-func (conf *INIConfig) GetOption(name string) (*Option, error) {
+func (conf INIConfig) GetOption(name string) (*Option, error) {
 	var option *Option
 	var err error
 
-	nameparts := strings.SplitN(name, "/", 1)
+	nameparts := strings.SplitN(name, "/", 2)
 	if section, ok := conf.Sections[nameparts[0]]; ok {
 		if opt, ok := section.Options[nameparts[1]]; ok {
 			option = opt

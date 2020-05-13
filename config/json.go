@@ -2,8 +2,10 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"reflect"
+	"strings"
 
 	"github.com/infrawatch/apputils/logging"
 )
@@ -62,7 +64,7 @@ func (conf *JSONConfig) AddStructured(section, name, tag string, object interfac
 }
 
 //Parse loads data from given file
-func (conf *JSONConfig) Parse(path string) error {
+func (conf JSONConfig) Parse(path string) error {
 	data, err := ioutil.ReadFile(path)
 	if err != nil {
 		conf.log.Metadata(map[string]interface{}{
@@ -134,4 +136,42 @@ func (conf *JSONConfig) Parse(path string) error {
 		}
 	}
 	return nil
+}
+
+func extractValue(opt *Option, optAddr []string) (*Option, error) {
+	var option *Option
+	var err error
+
+	theType := reflect.TypeOf(opt.GetStructured())
+	if _, ok := theType.FieldByName(optAddr[0]); ok {
+		value := reflect.ValueOf(opt.GetStructured()).FieldByName(optAddr[0])
+		option = &Option{value: value.Interface()}
+		if len(optAddr) > 1 {
+			option, err = extractValue(option, optAddr[1:])
+		}
+	}
+	return option, err
+}
+
+//GetOption returns Option objects according to given "section.option[.sub-option[.sub-option]]" string.
+func (conf JSONConfig) GetOption(name string) (*Option, error) {
+	var option *Option
+	var err error
+
+	nameparts := strings.SplitN(name, ".", 2)
+	if section, ok := conf.Sections[nameparts[0]]; ok {
+		optAddr := strings.Split(nameparts[1], ".")
+		if opt, ok := section.Options[optAddr[0]]; ok {
+			if len(optAddr) == 1 {
+				option = opt
+			} else {
+				option, err = extractValue(opt, optAddr[1:])
+			}
+		} else {
+			err = fmt.Errorf("did not find option '%s' in section '%s'", nameparts[1], nameparts[0])
+		}
+	} else {
+		err = fmt.Errorf("did not find section '%s'", nameparts[0])
+	}
+	return option, err
 }

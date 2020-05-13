@@ -23,6 +23,11 @@ type OuterTestObject struct {
 	Connections []InnerTestObject `json:"data_sources"`
 }
 
+type DynamicFetchTest struct {
+	AddrStr       string
+	ExpectedValue string
+}
+
 var (
 	JSONConfigContent = `{
 		"Default": {
@@ -120,5 +125,27 @@ func TestJSONConfigValues(t *testing.T) {
 		assert.Equal(t, "woobalooba", connTypedObj.Test, "Did not parse correctly")
 		parsedConnections := []InnerTestObject{InnerTestObject{"test1", "booyaka"}, InnerTestObject{"test2", "foobar"}}
 		assert.Equal(t, parsedConnections, connTypedObj.Connections, "Did not parse correctly")
+	})
+
+	t.Run("Test of fetching option dynamically", func(t *testing.T) {
+		conf := config.NewJSONConfig(JSONConfigMetadata, log)
+		var connections OuterTestObject
+		conf.AddStructured("Amqp1", "Connections", `json:"connections"`, connections)
+		err = conf.Parse(file.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		cases := []DynamicFetchTest{
+			DynamicFetchTest{"Amqp1.Connections.Test", "woobalooba"},
+			DynamicFetchTest{"Default.LogFile", "/var/log/another.log"},
+		}
+		for _, test := range cases {
+			if opt, err := conf.GetOption(test.AddrStr); err != nil {
+				t.Errorf("Failed to find existing option according to addr string: %s\n", err)
+			} else {
+				assert.Equal(t, test.ExpectedValue, opt.GetString(), "Did not parse correctly")
+			}
+		}
 	})
 }

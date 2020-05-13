@@ -73,7 +73,7 @@ func (opt *Option) GetStructured() interface{} {
 //Config interface for methods to accept various types of config objects (INI/JSON/...)
 type Config interface {
 	Parse(path string) error
-	GetOption(name string) (Option, error)
+	GetOption(name string) (*Option, error)
 }
 
 //Validator checks the validity of the config option value. It accepts single value

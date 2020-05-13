@@ -117,34 +117,57 @@ func TestValidators(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// test failing parsing (each config.Validator separately)
-	tests := []ValidatorTest{
-		ValidatorTest{"IntValidator", config.IntValidatorFactory(), "3"},
-		ValidatorTest{"MultiIntValidator", config.MultiIntValidatorFactory(","), "1,2"},
-		ValidatorTest{"BoolValidator", config.BoolValidatorFactory(), "true"},
-		ValidatorTest{"OptionsValidator", config.StringOptionsValidatorFactory([]string{"bar", "baz"}), "bar"},
-	}
-	for _, test := range tests {
+
+	t.Run("Test parsed values from INI configuration file", func(t *testing.T) {
+		tests := []ValidatorTest{
+			ValidatorTest{"IntValidator", config.IntValidatorFactory(), "3"},
+			ValidatorTest{"MultiIntValidator", config.MultiIntValidatorFactory(","), "1,2"},
+			ValidatorTest{"BoolValidator", config.BoolValidatorFactory(), "true"},
+			ValidatorTest{"OptionsValidator", config.StringOptionsValidatorFactory([]string{"bar", "baz"}), "bar"},
+		}
+		for _, test := range tests {
+			metadata := map[string][]config.Parameter{
+				"invalid": []config.Parameter{
+					config.Parameter{Name: test.Parameter, Tag: "", Default: test.defValue, Validators: []config.Validator{test.Validator}},
+				},
+			}
+			conf := config.NewINIConfig(metadata, log)
+			err = conf.Parse(file.Name())
+			if err == nil {
+				t.Errorf("Failed to report validation error with %s.", test.Parameter)
+			}
+		}
+	})
+
+	t.Run("Test of raising validation errors", func(t *testing.T) {
 		metadata := map[string][]config.Parameter{
 			"invalid": []config.Parameter{
-				config.Parameter{Name: test.Parameter, Tag: "", Default: test.defValue, Validators: []config.Validator{test.Validator}},
+				config.Parameter{Name: "default_test", Tag: "", Default: "default", Validators: []config.Validator{config.IntValidatorFactory()}},
+			},
+		}
+		conf := config.NewINIConfig(metadata, log)
+		if err = conf.Parse(file.Name()); err == nil {
+			t.Errorf("Failed to report validation error in constructor.")
+		}
+	})
+
+	t.Run("Test of fetching option dynamically", func(t *testing.T) {
+		metadata := map[string][]config.Parameter{
+			"default": []config.Parameter{
+				config.Parameter{Name: "log_file", Tag: "", Default: "/var/log/collectd-sensubility.log", Validators: []config.Validator{}},
 			},
 		}
 		conf := config.NewINIConfig(metadata, log)
 		err = conf.Parse(file.Name())
-		if err == nil {
-			t.Errorf("Failed to report validation error with %s.", test.Parameter)
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	// test failing constructor (validation of default values)
-	metadata := map[string][]config.Parameter{
-		"invalid": []config.Parameter{
-			config.Parameter{Name: "default_test", Tag: "", Default: "default", Validators: []config.Validator{config.IntValidatorFactory()}},
-		},
-	}
-	conf := config.NewINIConfig(metadata, log)
-	if err = conf.Parse(file.Name()); err == nil {
-		t.Errorf("Failed to report validation error in constructor.")
-	}
+		if opt, err := conf.GetOption("default/log_file"); err != nil {
+			t.Errorf("Failed to find existing option according to addr string: %s\n", err)
+		} else {
+			assert.Equal(t, "/var/tmp/test.log", opt.GetString(), "Did not parse correctly")
+		}
+	})
+
 	os.Remove(file.Name())
 }
