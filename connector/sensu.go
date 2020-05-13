@@ -11,15 +11,34 @@ import (
 )
 
 const (
+	//QueueNameKeepAlives is the name of queue used by Sensu server for receiving keepalive messages
 	QueueNameKeepAlives = "keepalives"
-	QueueNameResults    = "results"
+	//QueueNameResults is the name of queue used by Sensu server for receiving check result messages
+	QueueNameResults = "results"
 )
+
+//Result contains data about check execution
+type Result struct {
+	Command  string  `json:"command"`
+	Name     string  `json:"name"`
+	Issued   int64   `json:"issued"`
+	Executed int64   `json:"executed"`
+	Duration float64 `json:"duration"`
+	Output   string  `json:"output"`
+	Status   int     `json:"status"`
+}
+
+//CheckResult represents message structure for sending check results back to Sensu server
+type CheckResult struct {
+	Client string `json:"client"`
+	Result Result `json:"check"`
+}
 
 //CheckRequest is the output of the connector's listening loop
 type CheckRequest struct {
-	Command string
-	Name    string
-	Issued  int64
+	Command string `json:"command"`
+	Name    string `json:"name"`
+	Issued  int64  `json:"issued"`
 }
 
 //Keepalive holds structure for Sensu KeepAlive messages
@@ -31,13 +50,13 @@ type Keepalive struct {
 	Timestamp    int64    `json:"timestamp"`
 }
 
-//Connector holds all data and functions required for communication with Sensu (1.x) server via RabbitMQ
-type Connector struct {
+//SensuConnector holds all data and functions required for communication with Sensu (1.x) server via RabbitMQ
+type SensuConnector struct {
 	Address           string
 	Subscription      []string
 	ClientName        string
 	ClientAddress     string
-	KeepaliveInterval int
+	KeepaliveInterval int64
 	log               *logging.Logger
 	queueName         string
 	exchangeName      string
@@ -50,17 +69,66 @@ type Connector struct {
 }
 
 //NewConnector creates new Sensu connector from the given configuration file
-func NewConnector(cfg *config.Config, logger *logging.Logger) (*Connector, error) {
-	var connector Connector
-	connector.Address = cfg.Sections["sensu"].Options["connection"].GetString()
-	connector.Subscription = cfg.Sections["sensu"].Options["subscriptions"].GetStrings(",")
-	connector.ClientName = cfg.Sections["sensu"].Options["client_name"].GetString()
-	connector.ClientAddress = cfg.Sections["sensu"].Options["client_address"].GetString()
-	connector.KeepaliveInterval = cfg.Sections["sensu"].Options["keepalive_interval"].GetInt()
+func NewConnector(cfg config.Config, logger *logging.Logger) (*SensuConnector, error) {
+	connector := SensuConnector{}
+	switch conf := cfg.(type) {
+	case config.INIConfig:
+		if addr, err := conf.GetOption("sensu/connection"); err != nil {
+			connector.Address = addr.GetString()
+		} else {
+			return &connector, fmt.Errorf("Failed to get connection URL from configuration file at sensu/connection")
+		}
+		if subs, err := conf.GetOption("sensu/subscriptions"); err != nil {
+			connector.Subscription = subs.GetStrings(",")
+		} else {
+			return &connector, fmt.Errorf("Failed to get subscription channels from configuration file at sensu/subscriptions")
+		}
+		if clientName, err := conf.GetOption("sensu/client_name"); err != nil {
+			connector.ClientName = clientName.GetString()
+		} else {
+			return &connector, fmt.Errorf("Failed to get client name from configuration file at sensu/client_name")
+		}
+		if clientAddr, err := conf.GetOption("sensu/client_address"); err != nil {
+			connector.ClientAddress = clientAddr.GetString()
+		} else {
+			return &connector, fmt.Errorf("Failed to get client address from configuration file at sensu/client_address")
+		}
+		if interval, err := conf.GetOption("sensu/keepalive_interval"); err != nil {
+			connector.KeepaliveInterval = interval.GetInt()
+		} else {
+			return &connector, fmt.Errorf("Failed to get keepalive interval from configuration file at sensu/keepalive_interval")
+		}
+	case config.JSONConfig:
+		if addr, err := conf.GetOption("Sensu.Connection.Address"); err != nil {
+			connector.Address = addr.GetString()
+		} else {
+			return &connector, fmt.Errorf("Failed to get connection URL from configuration file at Sensu.Connection.Address")
+		}
+		if subs, err := conf.GetOption("Sensu.Connection.Subscriptions"); err != nil {
+			connector.Subscription = subs.GetStrings(",")
+		} else {
+			return &connector, fmt.Errorf("Failed to get subscription channels from configuration file at Sensu.Connection.Subscriptions")
+		}
+		if interval, err := conf.GetOption("Sensu.Connection.KeepaliveInterval"); err != nil {
+			connector.KeepaliveInterval = interval.GetInt()
+		} else {
+			return &connector, fmt.Errorf("Failed to get keepalive interval from configuration file at Sensu.Connection.KeepaliveInterval")
+		}
+		if clientName, err := conf.GetOption("Sensu.Client.Name"); err != nil {
+			connector.ClientName = clientName.GetString()
+		} else {
+			return &connector, fmt.Errorf("Failed to get client name from configuration file at Sensu.Client.Name")
+		}
+		if clientAddr, err := conf.GetOption("Sensu.Client.Address"); err != nil {
+			connector.ClientAddress = clientAddr.GetString()
+		} else {
+			return &connector, fmt.Errorf("Failed to get client address from configuration file at Sensu.Client.Address")
+		}
+	}
 
 	connector.log = logger
 	connector.exchangeName = fmt.Sprintf("client:%s", connector.ClientName)
-	connector.queueName = fmt.Sprintf("%s-collectd-%d", connector.ClientName, time.Now().Unix())
+	connector.queueName = fmt.Sprintf("%s-infrawatch-%d", connector.ClientName, time.Now().Unix())
 
 	err := connector.Connect()
 	if err != nil {
@@ -70,7 +138,7 @@ func NewConnector(cfg *config.Config, logger *logging.Logger) (*Connector, error
 }
 
 //Connect connects to RabbitMQ server and
-func (conn *Connector) Connect() error {
+func (conn *SensuConnector) Connect() error {
 	var err error
 	conn.inConnection, err = amqp.Dial(conn.Address)
 	if err != nil {
@@ -150,19 +218,23 @@ func (conn *Connector) Connect() error {
 	return nil
 }
 
-func (conn *Connector) ReConnect() error {
+//Reconnect tries to reconnect connector to RabbitMQ
+func (conn *SensuConnector) Reconnect() error {
 
 	return nil
 }
 
-func (conn *Connector) Disconnect() {
+//Disconnect closes all connections
+func (conn *SensuConnector) Disconnect() {
 	conn.inChannel.Close()
 	conn.outChannel.Close()
 	conn.inConnection.Close()
 	conn.outConnection.Close()
 }
 
-func (conn *Connector) Start(outchan chan interface{}, inchan chan interface{}) {
+//Start starts all processing loops. Channel outchan will contain received CheckRequest messages from Sensu server
+// and through inchan CheckResult messages are sent back to Sensu server
+func (conn *SensuConnector) Start(outchan chan interface{}, inchan chan interface{}) {
 	// receiving loop
 	go func() {
 		for req := range conn.consumer {
@@ -182,7 +254,7 @@ func (conn *Connector) Start(outchan chan interface{}, inchan chan interface{}) 
 	go func() {
 		for res := range inchan {
 			switch result := res.(type) {
-			case Result:
+			case CheckResult:
 				body, err := json.Marshal(result)
 				if err != nil {
 					conn.log.Metadata(map[string]interface{}{"error": err})
@@ -207,7 +279,7 @@ func (conn *Connector) Start(outchan chan interface{}, inchan chan interface{}) 
 					conn.log.Error("Failed to publish execution result.")
 				}
 			default:
-				conn.log.Metadata(map[string]interface{}{"type": fmt.Sprintf("%t", res)})
+				conn.log.Metadata(map[string]interface{}{"type": fmt.Sprintf("%T", res)})
 				conn.log.Error("Received execution result with invalid type.")
 			}
 		}
