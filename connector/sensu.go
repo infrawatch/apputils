@@ -57,7 +57,7 @@ type SensuConnector struct {
 	ClientName        string
 	ClientAddress     string
 	KeepaliveInterval int64
-	log               *logging.Logger
+	logger            *logging.Logger
 	queueName         string
 	exchangeName      string
 	inConnection      *amqp.Connection
@@ -69,7 +69,7 @@ type SensuConnector struct {
 }
 
 //NewConnector creates new Sensu connector from the given configuration file
-func NewConnector(cfg config.Config, logger *logging.Logger) (*SensuConnector, error) {
+func NewSensuConnector(cfg config.Config, logger *logging.Logger) (*SensuConnector, error) {
 	connector := SensuConnector{}
 	switch conf := cfg.(type) {
 	case config.INIConfig:
@@ -126,7 +126,7 @@ func NewConnector(cfg config.Config, logger *logging.Logger) (*SensuConnector, e
 		}
 	}
 
-	connector.log = logger
+	connector.logger = logger
 	connector.exchangeName = fmt.Sprintf("client:%s", connector.ClientName)
 	connector.queueName = fmt.Sprintf("%s-infrawatch-%d", connector.ClientName, time.Now().Unix())
 
@@ -235,6 +235,7 @@ func (conn *SensuConnector) Disconnect() {
 //Start starts all processing loops. Channel outchan will contain received CheckRequest messages from Sensu server
 // and through inchan CheckResult messages are sent back to Sensu server
 func (conn *SensuConnector) Start(outchan chan interface{}, inchan chan interface{}) {
+	//TODO(mmagr): implement stopping goroutines on Disconnect
 	// receiving loop
 	go func() {
 		for req := range conn.consumer {
@@ -244,8 +245,8 @@ func (conn *SensuConnector) Start(outchan chan interface{}, inchan chan interfac
 			if err == nil {
 				outchan <- request
 			} else {
-				conn.log.Metadata(map[string]interface{}{"error": err, "request-body": req.Body})
-				conn.log.Warn("Failed to unmarshal request body.")
+				conn.logger.Metadata(map[string]interface{}{"error": err, "request-body": req.Body})
+				conn.logger.Warn("Failed to unmarshal request body.")
 			}
 		}
 	}()
@@ -257,8 +258,8 @@ func (conn *SensuConnector) Start(outchan chan interface{}, inchan chan interfac
 			case CheckResult:
 				body, err := json.Marshal(result)
 				if err != nil {
-					conn.log.Metadata(map[string]interface{}{"error": err})
-					conn.log.Error("Failed to marshal execution result.")
+					conn.logger.Metadata(map[string]interface{}{"error": err})
+					conn.logger.Error("Failed to marshal execution result.")
 					continue
 				}
 				err = conn.outChannel.Publish(
@@ -275,12 +276,12 @@ func (conn *SensuConnector) Start(outchan chan interface{}, inchan chan interfac
 						Priority:        0,              // 0-9
 					})
 				if err != nil {
-					conn.log.Metadata(map[string]interface{}{"error": err})
-					conn.log.Error("Failed to publish execution result.")
+					conn.logger.Metadata(map[string]interface{}{"error": err})
+					conn.logger.Error("Failed to publish execution result.")
 				}
 			default:
-				conn.log.Metadata(map[string]interface{}{"type": fmt.Sprintf("%T", res)})
-				conn.log.Error("Received execution result with invalid type.")
+				conn.logger.Metadata(map[string]interface{}{"type": fmt.Sprintf("%T", res)})
+				conn.logger.Error("Received execution result with invalid type.")
 			}
 		}
 	}()
@@ -296,8 +297,8 @@ func (conn *SensuConnector) Start(outchan chan interface{}, inchan chan interfac
 				Timestamp:    time.Now().Unix(),
 			})
 			if err != nil {
-				conn.log.Metadata(map[string]interface{}{"error": err})
-				conn.log.Error("Failed to marshal keepalive body.")
+				conn.logger.Metadata(map[string]interface{}{"error": err})
+				conn.logger.Error("Failed to marshal keepalive body.")
 				continue
 			}
 			err = conn.outChannel.Publish(
@@ -314,8 +315,8 @@ func (conn *SensuConnector) Start(outchan chan interface{}, inchan chan interfac
 					Priority:        0,              // 0-9
 				})
 			if err != nil {
-				conn.log.Metadata(map[string]interface{}{"error": err})
-				conn.log.Error("Failed to publish keepalive body.")
+				conn.logger.Metadata(map[string]interface{}{"error": err})
+				conn.logger.Error("Failed to publish keepalive body.")
 			}
 			time.Sleep(time.Duration(conn.KeepaliveInterval) * time.Second)
 		}
