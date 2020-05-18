@@ -63,17 +63,8 @@ func (conf *JSONConfig) AddStructured(section, name, tag string, object interfac
 	)
 }
 
-//Parse loads data from given file
-func (conf JSONConfig) Parse(path string) error {
-	data, err := ioutil.ReadFile(path)
-	if err != nil {
-		conf.log.Metadata(map[string]interface{}{
-			"error": err,
-			"path":  path,
-		})
-		conf.log.Error("unable to read provided configuration file")
-		return err
-	}
+//Parse loads data from given byte slice
+func (conf JSONConfig) ParseBytes(data []byte) error {
 	// parse flat parameters
 	if err := json.Unmarshal(data, &conf.flat); err != nil {
 		conf.log.Metadata(map[string]interface{}{
@@ -136,6 +127,20 @@ func (conf JSONConfig) Parse(path string) error {
 		}
 	}
 	return nil
+}
+
+//Parse loads data from given file
+func (conf JSONConfig) Parse(path string) error {
+	data, err := ioutil.ReadFile(path)
+	if err != nil {
+		conf.log.Metadata(map[string]interface{}{
+			"error": err,
+			"path":  path,
+		})
+		conf.log.Error("unable to read provided configuration file")
+		return err
+	}
+	return conf.ParseBytes(data)
 }
 
 func extractValue(opt *Option, optAddr []string) (*Option, error) {

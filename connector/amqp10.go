@@ -16,8 +16,8 @@ type AMQP10Connector struct {
 	Address       string
 	ClientName    string
 	SendTimeout   int64
-	inConnection  *electron.Connection
-	outConnection *electron.Connection
+	inConnection  electron.Connection
+	outConnection electron.Connection
 	receivers     []electron.Receiver
 	logger        *logging.Logger
 }
@@ -31,41 +31,64 @@ type AMQP10Message struct {
 func NewAMQP10Connector(cfg config.Config, logger *logging.Logger) (*AMQP10Connector, error) {
 	connector := AMQP10Connector{}
 	switch conf := cfg.(type) {
-	case config.INIConfig:
-		if addr, err := conf.GetOption("amqp1/connection"); err != nil {
+	case *config.INIConfig:
+		if addr, err := conf.GetOption("amqp1/connection"); err == nil {
 			connector.Address = addr.GetString()
 		} else {
-			return &connector, fmt.Errorf("Failed to get connection URL from configuration file at amqp1/connection")
+			return &connector, fmt.Errorf("Failed to get connection URL from configuration file at amqp1/connection: %s", err)
 		}
-		if clientName, err := conf.GetOption("amqp1/client_name"); err != nil {
+		if sendTimeout, err := conf.GetOption("amqp1/send_timeout"); err == nil {
+			connector.SendTimeout = sendTimeout.GetInt()
+		} else {
+			return &connector, fmt.Errorf("Failed to get send timeout from configuration file at amqp1/send_timeout: %s", err)
+		}
+		if listen, err := conf.GetOption("amqp1/listen_channels"); err == nil {
+			prefetch := int64(-1)
+			prf, err := conf.GetOption("amqp1/listen_prefetch")
+			if err == nil {
+				prefetch = prf.GetInt()
+			}
+			for _, channel := range listen.GetStrings(",") {
+				connector.CreateReceiver(channel, int(prefetch))
+			}
+		}
+		if clientName, err := conf.GetOption("amqp1/client_name"); err == nil {
 			connector.ClientName = clientName.GetString()
 		} else {
-			return &connector, fmt.Errorf("Failed to get client name from configuration file at amqp1/client_name")
+			return &connector, fmt.Errorf("Failed to get client name from configuration file at amqp1/client_name: %s", err)
 		}
-		if clientName, err := conf.GetOption("amqp1/send_timeout"); err != nil {
-			connector.ClientName = clientName.GetString()
-		} else {
-			return &connector, fmt.Errorf("Failed to get send timeout from configuration file at amqp1/send_timeout")
-		}
-	case config.JSONConfig:
-		if addr, err := conf.GetOption("amqp1.Connection.Address"); err != nil {
+	case *config.JSONConfig:
+		if addr, err := conf.GetOption("Amqp1.Connection.Address"); err == nil {
 			connector.Address = addr.GetString()
 		} else {
-			return &connector, fmt.Errorf("Failed to get connection URL from configuration file at Amqp1.Connection.Address")
+			return &connector, fmt.Errorf("Failed to get connection URL from configuration file at Amqp1.Connection.Address: %s", err)
 		}
-		if addr, err := conf.GetOption("amqp1.Connection.SendTimeout"); err != nil {
-			connector.Address = addr.GetString()
+		if sendTimeout, err := conf.GetOption("Amqp1.Connection.SendTimeout"); err == nil {
+			connector.SendTimeout = sendTimeout.GetInt()
 		} else {
-			return &connector, fmt.Errorf("Failed to get send timeout from configuration file at Amqp1.Connection.SendTimeout")
+			return &connector, fmt.Errorf("Failed to get send timeout from configuration file at Amqp1.Connection.SendTimeout: %s", err)
 		}
-		if clientName, err := conf.GetOption("Amqp1.Client.Name"); err != nil {
+		if listen, err := conf.GetOption("Amqp1.Connection.ListenChannels"); err == nil {
+			prefetch := int64(-1)
+			prf, err := conf.GetOption("Amqp1.Connection.ListenPrefetch")
+			if err == nil {
+				prefetch = prf.GetInt()
+			}
+			for _, channel := range listen.GetStrings(",") {
+				connector.CreateReceiver(channel, int(prefetch))
+			}
+		}
+		if clientName, err := conf.GetOption("Amqp1.Client.Name"); err == nil {
 			connector.ClientName = clientName.GetString()
 		} else {
-			return &connector, fmt.Errorf("Failed to get client name from configuration file at Amqp1.Client.Name")
+			return &connector, fmt.Errorf("Failed to get client name from configuration file at Amqp1.Client.Name: %s", err)
 		}
+	default:
+		return &connector, fmt.Errorf("Unknown Config type")
 	}
 
 	connector.receivers = make([]electron.Receiver, 0)
+	connector.logger = logger
 	return &connector, nil
 }
 
@@ -90,7 +113,7 @@ func (conn *AMQP10Connector) Connect() error {
 		conn.logger.Debug("AMQP dial TCP error")
 		return err
 	}
-	conn.inConnection = &cin
+	conn.inConnection = cin
 
 	outContainer := electron.NewContainer(fmt.Sprintf("%s-infrawatch-out-%d", conn.ClientName, time.Now().Unix()))
 	cout, err := outContainer.Dial("tcp", url.Host)
@@ -101,7 +124,7 @@ func (conn *AMQP10Connector) Connect() error {
 		conn.logger.Debug("AMQP dial TCP error")
 		return err
 	}
-	conn.outConnection = &cout
+	conn.outConnection = cout
 
 	return nil
 }
@@ -119,7 +142,10 @@ func (conn *AMQP10Connector) CreateReceiver(address string, prefetch int) error 
 		opts = append(opts, electron.Capacity(prefetch), electron.Prefetch(true))
 	}
 
-	if rcv, err := (*conn.inConnection).Receiver(opts...); err == nil {
+	if conn.inConnection == nil {
+		return fmt.Errorf("Connection to AMQP-1.0 node has to be created first.")
+	}
+	if rcv, err := conn.inConnection.Receiver(opts...); err == nil {
 		conn.receivers = append(conn.receivers, rcv)
 	} else {
 		conn.logger.Metadata(map[string]interface{}{
@@ -140,8 +166,8 @@ func (conn *AMQP10Connector) Reconnect() error {
 
 //Disconnect closes all connections
 func (conn *AMQP10Connector) Disconnect() {
-	(*conn.inConnection).Close(nil)
-	(*conn.outConnection).Close(nil)
+	conn.inConnection.Close(nil)
+	conn.outConnection.Close(nil)
 	conn.logger.Metadata(map[string]interface{}{
 		"incoming": conn.inConnection,
 		"outgoing": conn.outConnection,
@@ -154,12 +180,11 @@ func (conn *AMQP10Connector) Disconnect() {
 func (conn *AMQP10Connector) Start(outchan chan interface{}, inchan chan interface{}) {
 	//create listening goroutine for each receiver
 	for _, rcv := range conn.receivers {
-		go func() {
+		go func(receiver electron.Receiver) {
 			for {
-				if msg, err := rcv.Receive(); err == nil {
+				if msg, err := receiver.Receive(); err == nil {
 					msg.Accept()
-
-					message := AMQP10Message{Address: rcv.Source()}
+					message := AMQP10Message{Address: receiver.Source()}
 					switch typedBody := msg.Message.Body().(type) {
 					case amqp.Binary:
 						message.Body = typedBody.String()
@@ -176,20 +201,20 @@ func (conn *AMQP10Connector) Start(outchan chan interface{}, inchan chan interfa
 				} else if err == electron.Closed {
 					conn.logger.Metadata(map[string]interface{}{
 						"connection": conn.Address,
-						"address":    rcv.Source(),
+						"address":    receiver.Source(),
 					})
 					conn.logger.Warn("Channel closed, closing receiver loop")
 					return
 				} else {
 					conn.logger.Metadata(map[string]interface{}{
 						"connection": conn.Address,
-						"address":    rcv.Source(),
+						"address":    receiver.Source(),
 						"error":      err,
 					})
 					conn.logger.Error("Received AMQP1.0 error")
 				}
 			}
-		}()
+		}(rcv)
 	}
 
 	//create sending goroutine
@@ -197,7 +222,7 @@ func (conn *AMQP10Connector) Start(outchan chan interface{}, inchan chan interfa
 		for msg := range inchan {
 			switch message := msg.(type) {
 			case AMQP10Message:
-				sender, err := (*conn.outConnection).Sender(electron.Target(message.Address))
+				sender, err := conn.outConnection.Sender(electron.Target(message.Address))
 				if err != nil {
 					conn.logger.Metadata(map[string]interface{}{
 						"connection": conn.Address,
@@ -216,7 +241,30 @@ func (conn *AMQP10Connector) Start(outchan chan interface{}, inchan chan interfa
 				m := amqp.NewMessage()
 				m.SetContentType("application/json")
 				m.Marshal(message.Body)
-				sender.SendSyncTimeout(m, time.Duration(conn.SendTimeout))
+
+				ackChan := sender.SendWaitable(m)
+				timeout := conn.SendTimeout
+				for timeout > 0 {
+					select {
+					case ack := <-ackChan:
+						if ack.Status != 2 {
+							conn.logger.Metadata(map[string]interface{}{
+								"message": m,
+								"ack":     ack,
+							})
+							conn.logger.Warn("Sent message was not ACKed")
+						}
+					default:
+						timeout -= 1
+						time.Sleep(time.Second)
+					}
+				}
+				if timeout <= 0 {
+					conn.logger.Metadata(map[string]interface{}{
+						"message": m,
+					})
+					conn.logger.Warn("Sent message timed out on ACK. Delivery not guaranteed.")
+				}
 			default:
 				conn.logger.Metadata(map[string]interface{}{
 					"message": msg,

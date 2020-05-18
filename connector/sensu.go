@@ -72,58 +72,60 @@ type SensuConnector struct {
 func NewSensuConnector(cfg config.Config, logger *logging.Logger) (*SensuConnector, error) {
 	connector := SensuConnector{}
 	switch conf := cfg.(type) {
-	case config.INIConfig:
-		if addr, err := conf.GetOption("sensu/connection"); err != nil {
+	case *config.INIConfig:
+		if addr, err := conf.GetOption("sensu/connection"); err == nil {
 			connector.Address = addr.GetString()
 		} else {
 			return &connector, fmt.Errorf("Failed to get connection URL from configuration file at sensu/connection")
 		}
-		if subs, err := conf.GetOption("sensu/subscriptions"); err != nil {
+		if subs, err := conf.GetOption("sensu/subscriptions"); err == nil {
 			connector.Subscription = subs.GetStrings(",")
 		} else {
 			return &connector, fmt.Errorf("Failed to get subscription channels from configuration file at sensu/subscriptions")
 		}
-		if clientName, err := conf.GetOption("sensu/client_name"); err != nil {
+		if clientName, err := conf.GetOption("sensu/client_name"); err == nil {
 			connector.ClientName = clientName.GetString()
 		} else {
 			return &connector, fmt.Errorf("Failed to get client name from configuration file at sensu/client_name")
 		}
-		if clientAddr, err := conf.GetOption("sensu/client_address"); err != nil {
+		if clientAddr, err := conf.GetOption("sensu/client_address"); err == nil {
 			connector.ClientAddress = clientAddr.GetString()
 		} else {
 			return &connector, fmt.Errorf("Failed to get client address from configuration file at sensu/client_address")
 		}
-		if interval, err := conf.GetOption("sensu/keepalive_interval"); err != nil {
+		if interval, err := conf.GetOption("sensu/keepalive_interval"); err == nil {
 			connector.KeepaliveInterval = interval.GetInt()
 		} else {
 			return &connector, fmt.Errorf("Failed to get keepalive interval from configuration file at sensu/keepalive_interval")
 		}
-	case config.JSONConfig:
-		if addr, err := conf.GetOption("Sensu.Connection.Address"); err != nil {
+	case *config.JSONConfig:
+		if addr, err := conf.GetOption("Sensu.Connection.Address"); err == nil {
 			connector.Address = addr.GetString()
 		} else {
 			return &connector, fmt.Errorf("Failed to get connection URL from configuration file at Sensu.Connection.Address")
 		}
-		if subs, err := conf.GetOption("Sensu.Connection.Subscriptions"); err != nil {
+		if subs, err := conf.GetOption("Sensu.Connection.Subscriptions"); err == nil {
 			connector.Subscription = subs.GetStrings(",")
 		} else {
 			return &connector, fmt.Errorf("Failed to get subscription channels from configuration file at Sensu.Connection.Subscriptions")
 		}
-		if interval, err := conf.GetOption("Sensu.Connection.KeepaliveInterval"); err != nil {
+		if interval, err := conf.GetOption("Sensu.Connection.KeepaliveInterval"); err == nil {
 			connector.KeepaliveInterval = interval.GetInt()
 		} else {
 			return &connector, fmt.Errorf("Failed to get keepalive interval from configuration file at Sensu.Connection.KeepaliveInterval")
 		}
-		if clientName, err := conf.GetOption("Sensu.Client.Name"); err != nil {
+		if clientName, err := conf.GetOption("Sensu.Client.Name"); err == nil {
 			connector.ClientName = clientName.GetString()
 		} else {
 			return &connector, fmt.Errorf("Failed to get client name from configuration file at Sensu.Client.Name")
 		}
-		if clientAddr, err := conf.GetOption("Sensu.Client.Address"); err != nil {
+		if clientAddr, err := conf.GetOption("Sensu.Client.Address"); err == nil {
 			connector.ClientAddress = clientAddr.GetString()
 		} else {
 			return &connector, fmt.Errorf("Failed to get client address from configuration file at Sensu.Client.Address")
 		}
+	default:
+		return &connector, fmt.Errorf("Unknown Config type")
 	}
 
 	connector.logger = logger
