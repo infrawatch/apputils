@@ -34,7 +34,7 @@ type jsonValue [2]string
 
 type LokiStream struct {
 	Stream map[string]string `json:"stream"`
-	Values []jsonValue `json:"values"`
+	Values []jsonValue       `json:"values"`
 }
 
 type LokiLog struct {
@@ -48,22 +48,22 @@ type jsonMessage struct {
 }
 
 type LokiConnector struct {
-	url			   string
-	endpoints	   endpoints
+	url            string
+	endpoints      endpoints
 	currentMessage jsonMessage
-	streams		   chan *LokiStream
-	quit		   chan struct{}
-	maxBatch	   int
+	streams        chan *LokiStream
+	quit           chan struct{}
+	maxBatch       int64
 	maxWaitTime    time.Duration
-	wait		   sync.WaitGroup
-	batchCounter   int
-	timer		   *time.Timer
-	logger		   *logging.Logger
+	wait           sync.WaitGroup
+	batchCounter   int64
+	timer          *time.Timer
+	logger         *logging.Logger
 }
 
 type Message struct {
 	Message string
-	Time	time.Duration
+	Time    time.Duration
 }
 
 type endpoints struct {
@@ -83,7 +83,7 @@ func NewLokiConnector(cfg config.Config, logger *logging.Logger) (*LokiConnector
 	client := LokiConnector {
 		quit:      make(chan struct{}),
 		streams:   make(chan *LokiStream),
-		logger:    logger
+		logger:    logger,
 		endpoints: endpoints {
 			push:  "/loki/api/v1/push",
 			query: "/loki/api/v1/query_range",
@@ -92,38 +92,40 @@ func NewLokiConnector(cfg config.Config, logger *logging.Logger) (*LokiConnector
 	}
 
 	switch conf := cfg.(type) {
-	case config.INIConfig
-		if addr, err := conf.GetOption("loki/connection"); err != nil {
+	case *config.INIConfig:
+		if addr, err := conf.GetOption("loki/connection"); err == nil {
 			client.url = addr.GetString()
 		} else {
 			return nil, fmt.Errorf("Failed to get connection URL from configuration file at loki/connection")
 		}
-		if batchSize, err := conf.GetOption("loki/batchSize"); err != nil {
+		if batchSize, err := conf.GetOption("loki/batchSize"); err == nil {
 			client.maxBatch = batchSize.GetInt()
 		} else {
 			return nil, fmt.Errorf("Failed to get connection max batch size from configuration file at loki/batchSize")
 		}
-		if waitTime, err := conf.GetOption("loki/maxWaitTime"); err != nil {
-			client.maxWaitTime = waitTime.GetInt() * time.Millisecond
+		if waitTime, err := conf.GetOption("loki/maxWaitTime"); err == nil {
+			client.maxWaitTime = time.Duration(waitTime.GetInt()) * time.Millisecond
 		} else {
 			return nil, fmt.Errorf("Failed to get connection max wait time from configuration file at loki/maxWaitTime")
 		}
-	case config.JSONConfig
-		if addr, err := conf.GetOption("loki.Connection.Address"); err != nil {
+	case *config.JSONConfig:
+		if addr, err := conf.GetOption("Loki.Connection.Address"); err == nil {
 			client.url = addr.GetString()
 		} else {
-			return nil, fmt.Errorf("Failed to get connection URL from configuration file at loki.Connection.Address")
+			return nil, fmt.Errorf("Failed to get connection URL from configuration file at Loki.Connection.Address: %s", err)
 		}
-		if batchSize, err := conf.GetOption("loki.Connection.BatchSize"); err != nil {
+		if batchSize, err := conf.GetOption("Loki.Connection.BatchSize"); err == nil {
 			client.maxBatch = batchSize.GetInt()
 		} else {
-			return nil, fmt.Errorf("Failed to get connection max batch size from configuration file at loki.Connection.BatchSize")
+			return nil, fmt.Errorf("Failed to get connection max batch size from configuration file at Loki.Connection.BatchSize: %s", err)
 		}
-		if waitTime, err := conf.GetOption("loki.Connection.maxWaitTime"); err != nil {
-			client.maxWaitTime = waitTime.GetInt() * time.Millisecond
+		if waitTime, err := conf.GetOption("Loki.Connection.MaxWaitTime"); err == nil {
+			client.maxWaitTime = time.Duration(waitTime.GetInt()) * time.Millisecond
 		} else {
-			return nil, fmt.Errorf("Failed to get connection max wait time from configuration file at loki.Connection.MaxWaitTime")
+			return nil, fmt.Errorf("Failed to get connection max wait time from configuration file at Loki.Connection.MaxWaitTime: %s", err)
 		}
+	default:
+		return &client, fmt.Errorf("Unknown Config type")
 	}
 	return &client, nil
 }
@@ -131,7 +133,7 @@ func NewLokiConnector(cfg config.Config, logger *logging.Logger) (*LokiConnector
 // Just checks the Loki availability
 func (client *LokiConnector) Connect() error {
 	if !client.IsReady() {
-		return fmt.Errorf("The server on the following url is not ready: %s", url)
+		return fmt.Errorf("The server on the following url is not ready: %s", client.url)
 	} else {
 		return nil
 	}
@@ -147,19 +149,14 @@ func (client *LokiConnector) Disconnect() {
 // Starts a goroutine, which sends data to loki if
 // the current batch > maxBatch or if more time
 // than maxWaitTime passed
-func (client *LokiConnector) Start(outchan chan interface(), inchan chan interface()) {
+func (client *LokiConnector) Start(outchan chan interface{}, inchan chan interface{}) {
 	client.wait.Add(1)
 	go func() {
 		client.timer = time.NewTimer(client.maxWaitTime)
 
 		defer func() {
 			if client.batchCounter > 0 {
-				response, err := client.send()
-				// Don't want to block only because the
-				// outchan is full
-				if len(outchan) == 0 {
-					outchan <- response
-				}
+				client.send()
 			}
 			client.wait.Done()
 		}()
@@ -168,16 +165,16 @@ func (client *LokiConnector) Start(outchan chan interface(), inchan chan interfa
 			case <-client.quit:
 				return
 			case logs := <-inchan:
-				switch message := logs.(type)
+				switch message := logs.(type) {
 				case LokiStream:
-					addStream(message, outchan)
+					client.addStream(message)
 				case LokiLog:
 					m := Message {
-						Message: message.Log,
+						Message: message.LogMessage,
 						Time: message.Timestamp,
 					}
-					stream := CreateStream(message.labels, []Message{m})
-					addStream(stream, outchan)
+					stream := client.CreateStream(message.Labels, []Message{m})
+					client.addStream(stream)
 				default:
 					client.logger.Metadata(map[string]interface{}{
 						"logs": logs,
@@ -190,10 +187,7 @@ func (client *LokiConnector) Start(outchan chan interface(), inchan chan interfa
 						"logStreams": client.currentMessage.Streams,
 					})
 					client.logger.Debug("Sending logs, cause: time == maxWaitTime")
-					response, err := client.send()
-					if len(outchan) == 0 {
-						outchan <- response
-					}
+					client.send()
 				} else {
 					client.timer.Reset(client.maxWaitTime)
 				}
@@ -202,7 +196,7 @@ func (client *LokiConnector) Start(outchan chan interface(), inchan chan interfa
 	}()
 }
 
-func (client *LokiConnector) addStream(stream LokiStream, outchan chan interface{}) {
+func (client *LokiConnector) addStream(stream LokiStream) {
 	client.currentMessage.Streams = append(client.currentMessage.Streams, stream)
 	client.batchCounter++
 	if client.batchCounter == client.maxBatch {
@@ -210,10 +204,7 @@ func (client *LokiConnector) addStream(stream LokiStream, outchan chan interface
 			"logStreams": client.currentMessage.Streams,
 		})
 		client.logger.Debug("Sending logs, cause: batchCounter == maxBatch")
-		response, err := client.send()
-		if len(outchan) == 0 {
-			outchan <- response
-		}
+		client.send()
 	}
 }
 
@@ -235,10 +226,10 @@ func (client *LokiConnector) CreateStream(labels map[string]string, messages []M
 }
 
 // Encodes the messages and sends them to loki
-func (client *LokiConnector) send() (*http.Response error) {
+func (client *LokiConnector) send() (*http.Response, error) {
 	str, err := json.Marshal(client.currentMessage)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	response, err := http.Post(client.url + client.endpoints.push, "application/json", bytes.NewReader(str))
@@ -302,6 +293,9 @@ func (client *LokiConnector) Query(queryString string, startTime time.Duration, 
 	client.logger.Debug("Sending query to Loki")
 
 	response, err := http.Get(url)
+	if err != nil {
+		return []Message{}, err
+	}
 
 	client.logger.Metadata(map[string]interface{}{
 		"response": response,
