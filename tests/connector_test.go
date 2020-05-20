@@ -6,7 +6,6 @@ import (
 	"os"
 	"path"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -27,6 +26,13 @@ const (
 		"Client": {
 			"Name": "connectortest"
 		}
+	},
+	"Loki": {
+		"Connection": {
+			"Address": "http://localhost:3100",
+			"BatchSize": 4,
+			"MaxWaitTime": 50
+		}
 	}
 }
 `
@@ -39,6 +45,12 @@ type MockedConnection struct {
 
 type MockedClient struct {
 	Name string
+}
+
+type MockedLokiConnection struct {
+	Address     string
+	BatchSize   int
+	MaxWaitTime int
 }
 
 func TestAMQP10SendAndReceiveMessage(t *testing.T) {
@@ -94,36 +106,161 @@ func TestAMQP10SendAndReceiveMessage(t *testing.T) {
 }
 
 func TestLoki(t *testing.T) {
-	// TODO: read these from config
-	server := "http://localhost"
-	port := "3100"
-	batchSize := 4
-	maxWaitTime := 50 * time.Millisecond
-	testId := strconv.FormatInt(time.Now().UnixNano(), 16)
-	url := strings.Join([]string{server, port}, ":")
+	tmpdir, err := ioutil.TempDir(".", "connector_test_tmp")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer os.RemoveAll(tmpdir)
+	logpath := path.Join(tmpdir, "test.log")
+	logger, err := logging.NewLogger(logging.DEBUG, logpath)
+	if err != nil {
+		t.Fatalf("Failed to open log file %s. %s\n", logpath, err)
+	}
+	defer logger.Destroy()
 
-	client, err := connector.NewLokiConnector(url, batchSize, maxWaitTime)
+	metadata := map[string][]config.Parameter{
+		"Loki": []config.Parameter{
+			config.Parameter{Name: "LogFile", Tag: ``, Default: logpath, Validators: []config.Validator{}},
+		},
+	}
+	cfg := config.NewJSONConfig(metadata, logger)
+	cfg.AddStructured("Loki", "Connection", ``, MockedLokiConnection{})
+	err = cfg.ParseBytes([]byte(ConfigContent))
+	if err != nil {
+		t.Fatalf("Failed to parse config file: %s", err)
+	}
+
+	bs, err := cfg.GetOption("Loki.Connection.BatchSize")
+	if err != nil {
+		t.Fatalf("Failed to get batch size from config file: %s", ConfigContent)
+	}
+	batchSize := int(bs.GetInt())
+	testId := strconv.FormatInt(time.Now().UnixNano(), 16)
+
+	client, err := connector.NewLokiConnector(cfg, logger)
 	if err != nil {
 		t.Fatalf("Failed to create loki client: %s", err)
 	}
-	assert.Equal(t, client.IsReady(), true, "The client isn't ready")
+	err = client.Connect()
+	if err != nil {
+		t.Fatalf("Failed to connect to loki: %s", err)
+	}
 
 	defer func() {
-		client.Shutdown()
+		client.Disconnect()
 	}()
 
-	// push a whole batch
-	t.Run("Test sending in batches", func(t *testing.T) {
-		c, err := connector.NewLokiConnector(url, batchSize, 10*time.Second)
+	t.Run("Test sending whole streams", func(t *testing.T) {
+		c, err := connector.NewLokiConnector(cfg, logger)
 		if err != nil {
 			t.Fatalf("Failed to create loki client: %s", err)
 		}
-		c.Start()
+		err = c.Connect()
+		if err != nil {
+			t.Fatalf("Failed to connect to loki: %s", err)
+		}
+		receiver := make(chan interface{})
+		sender := make(chan interface{})
+		c.Start(receiver, sender)
 		defer func() {
-			c.Shutdown()
+			c.Disconnect()
 		}()
 
 		currentTime := time.Duration(time.Now().UnixNano())
+		var messages []connector.Message
+		for i := 0; i < batchSize; i++ {
+			labels := make(map[string]string)
+			labels["test"] = "streams"
+			labels["unique"] = testId
+			labels["order"] = strconv.FormatInt(int64(i), 10)
+			message1 := connector.Message{
+				Time:    currentTime,
+				Message: "test message streams1",
+			}
+			message2 := connector.Message{
+				Time:    currentTime,
+				Message: "test message streams2",
+			}
+			messages = []connector.Message{message1, message2}
+			sender <-c.CreateStream(labels, messages)
+		}
+		time.Sleep(10 * time.Millisecond)
+
+		// query it back
+		queryString := "{test=\"streams\",unique=\"" + testId + "\"}"
+		answer, err := c.Query(queryString, 0, batchSize * 5)
+		if err != nil {
+			t.Fatalf("Couldn't query loki after push to test streams: %s", err)
+		}
+		assert.Equal(t, batchSize * 2, len(answer), "Query after streams test returned wrong count of results")
+		for _, message := range messages {
+			assert.Contains(t, answer, message, "Wrong test message when querying for streams test results")
+		}
+	})
+
+	t.Run("Test sending single logs", func(t *testing.T) {
+		c, err := connector.NewLokiConnector(cfg, logger)
+		if err != nil {
+			t.Fatalf("Failed to create loki client: %s", err)
+		}
+		err = c.Connect()
+		if err != nil {
+			t.Fatalf("Failed to connect to loki: %s", err)
+		}
+		receiver := make(chan interface{})
+		sender := make(chan interface{})
+		c.Start(receiver, sender)
+		defer func() {
+			c.Disconnect()
+		}()
+
+		currentTime := time.Duration(time.Now().UnixNano())
+		for i := 0; i < batchSize; i++ {
+			labels := make(map[string]string)
+			labels["test"] = "singleLog"
+			labels["unique"] = testId
+			labels["order"] = strconv.FormatInt(int64(i), 10)
+			message := connector.LokiLog {
+				LogMessage: "Test message single logs",
+				Timestamp: currentTime,
+				Labels: labels,
+			}
+			sender <- message
+		}
+		time.Sleep(10 * time.Millisecond)
+
+		// query it back
+		queryString := "{test=\"singleLog\",unique=\"" + testId + "\"}"
+		answer, err := c.Query(queryString, 0, batchSize)
+		if err != nil {
+			t.Fatalf("Couldn't query loki after push to test single logs: %s", err)
+		}
+		assert.Equal(t, batchSize, len(answer), "Query after single log test returned wrong count of results")
+		for _, message := range answer {
+			assert.Equal(t, "Test message single logs", message.Message, "Wrong test message when querying for single log test results")
+			assert.Equal(t, currentTime, message.Time, "Wrong timestamp in queried single log test message")
+		}
+	})
+
+	// push a whole batch
+	t.Run("Test sending in batches", func(t *testing.T) {
+		c, err := connector.NewLokiConnector(cfg, logger)
+		if err != nil {
+			t.Fatalf("Failed to create loki client: %s", err)
+		}
+		err = c.Connect()
+		if err != nil {
+			t.Fatalf("Failed to connect to loki: %s", err)
+		}
+		receiver := make(chan interface{})
+		sender := make(chan interface{})
+		c.Start(receiver, sender)
+		defer func() {
+			c.Disconnect()
+		}()
+
+		currentTime := time.Duration(time.Now().UnixNano())
+		var messages []connector.Message
 		for i := 0; i < batchSize; i++ {
 			labels := make(map[string]string)
 			labels["test"] = "batch"
@@ -133,8 +270,8 @@ func TestLoki(t *testing.T) {
 				Time:    currentTime,
 				Message: "test message batch",
 			}
-			messages := []connector.Message{message}
-			c.AddStream(labels, messages)
+			messages = []connector.Message{message}
+			sender <-c.CreateStream(labels, messages)
 		}
 		time.Sleep(10 * time.Millisecond)
 
@@ -145,21 +282,26 @@ func TestLoki(t *testing.T) {
 			t.Fatalf("Couldn't query loki after batch push: %s", err)
 		}
 		assert.Equal(t, batchSize, len(answer), "Query after batch test returned wrong count of results")
-		for _, message := range answer {
-			assert.Equal(t, "test message batch", message.Message, "Wrong test message when querying for batch test results")
-			assert.Equal(t, currentTime, message.Time, "Wrong timestamp in queried batch test message")
+		for _, message := range messages {
+			assert.Contains(t, answer, message, "Wrong test message when querying for batch test results")
 		}
 	})
 
 	// push just one message and wait for the maxWaitTime to pass
 	t.Run("Test waiting for maxWaitTime to pass", func(t *testing.T) {
-		c, err := connector.NewLokiConnector(url, batchSize, maxWaitTime)
+		c, err := connector.NewLokiConnector(cfg, logger)
 		if err != nil {
 			t.Fatalf("Failed to create loki client: %s", err)
 		}
-		c.Start()
+		err = c.Connect()
+		if err != nil {
+			t.Fatalf("Failed to connect to loki: %s", err)
+		}
+		receiver := make(chan interface{})
+		sender := make(chan interface{})
+		c.Start(receiver, sender)
 		defer func() {
-			c.Shutdown()
+			c.Disconnect()
 		}()
 
 		labels := make(map[string]string)
@@ -171,7 +313,7 @@ func TestLoki(t *testing.T) {
 			Message: "test message single",
 		}
 		messages := []connector.Message{message}
-		c.AddStream(labels, messages)
+		sender <- c.CreateStream(labels, messages)
 		time.Sleep(80 * time.Millisecond)
 
 		// query it back
@@ -182,52 +324,7 @@ func TestLoki(t *testing.T) {
 		}
 		assert.Equal(t, 1, len(answer), "Query after maxWaitTime test returned wrong count of results")
 		for _, message := range answer {
-			assert.Equal(t, "test message single", message.Message, "Wrong test message when querying for maxWaitTime test results")
-			assert.Equal(t, currentTime, message.Time, "Wrong timestamp in queried maxWaitTime test message")
-		}
-	})
-
-	// test sending multiple messages in a single stream
-	t.Run("Test sending multiple messages in a single stream", func(t *testing.T) {
-		c, err := connector.NewLokiConnector(url, batchSize, maxWaitTime)
-		if err != nil {
-			t.Fatalf("Failed to create loki client: %s", err)
-		}
-		c.Start()
-		defer func() {
-			c.Shutdown()
-		}()
-
-		labels := make(map[string]string)
-		labels["test"] = "multiple_in_a_stream"
-		labels["unique"] = testId
-		currentTime := time.Duration(time.Now().UnixNano())
-		var messages []connector.Message
-		for i := 0; i < 2; i++ {
-			message := connector.Message{
-				Time:    currentTime,
-				Message: strconv.FormatInt(int64(i), 10),
-			}
-			messages = append(messages, message)
-		}
-		c.AddStream(labels, messages)
-		time.Sleep(80 * time.Millisecond)
-
-		// query it back
-		queryString := "{test=\"multiple_in_a_stream\",unique=\"" + testId + "\"}"
-		answer, err := c.Query(queryString, 0, batchSize)
-		if err != nil {
-			t.Fatalf("Couldn't query loki after pushing multiple messages in a stream: %s", err)
-		}
-		assert.Equal(t, 2, len(answer), "Query after sending multiple messages in a single stream returned wrong count of results")
-		// we should get one message, that equals "0" and one
-		// message, that equals "1", but we don't know in
-		// which order
-		if (answer[0].Message != "0" || answer[1].Message != "1") &&
-			(answer[0].Message != "1" || answer[1].Message != "0") {
-			t.Fatalf("Wrong test message when querying for \"send multiple messages in a single stream\" results")
-			assert.Equal(t, currentTime, answer[0].Time, "Wrong timestamp in queried \"send multiple messages in a single stream\"test message")
-			assert.Equal(t, currentTime, answer[1].Time, "Wrong timestamp in queried \"send multiple messages in a single stream\"test message")
+			assert.Equal(t, messages[0], message, "Wrong test message when querying for maxWaitTime test results")
 		}
 	})
 }
