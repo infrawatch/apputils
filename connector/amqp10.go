@@ -58,27 +58,27 @@ func NewAMQP10Connector(cfg config.Config, logger *logging.Logger) (*AMQP10Conne
 			return &connector, fmt.Errorf("Failed to get client name from configuration file at amqp1/client_name: %s", err)
 		}
 	case *config.JSONConfig:
-		if addr, err := conf.GetOption("Amqp1.Connection.Address"); err == nil {
+		if addr, err := conf.GetOption("Amqp1.Connection.Address"); err == nil && addr != nil {
 			connector.Address = addr.GetString()
 		} else {
 			return &connector, fmt.Errorf("Failed to get connection URL from configuration file at Amqp1.Connection.Address: %s", err)
 		}
-		if sendTimeout, err := conf.GetOption("Amqp1.Connection.SendTimeout"); err == nil {
+		if sendTimeout, err := conf.GetOption("Amqp1.Connection.SendTimeout"); err == nil && sendTimeout != nil {
 			connector.SendTimeout = sendTimeout.GetInt()
 		} else {
 			return &connector, fmt.Errorf("Failed to get send timeout from configuration file at Amqp1.Connection.SendTimeout: %s", err)
 		}
-		if listen, err := conf.GetOption("Amqp1.Connection.ListenChannels"); err == nil {
+		if listen, err := conf.GetOption("Amqp1.Connection.ListenChannels"); err == nil && listen != nil {
 			prefetch := int64(-1)
 			prf, err := conf.GetOption("Amqp1.Connection.ListenPrefetch")
-			if err == nil {
+			if err == nil && prf != nil {
 				prefetch = prf.GetInt()
 			}
 			for _, channel := range listen.GetStrings(",") {
 				connector.CreateReceiver(channel, int(prefetch))
 			}
 		}
-		if clientName, err := conf.GetOption("Amqp1.Client.Name"); err == nil {
+		if clientName, err := conf.GetOption("Amqp1.Client.Name"); err == nil && clientName != nil {
 			connector.ClientName = clientName.GetString()
 		} else {
 			return &connector, fmt.Errorf("Failed to get client name from configuration file at Amqp1.Client.Name: %s", err)

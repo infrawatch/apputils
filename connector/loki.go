@@ -109,17 +109,17 @@ func NewLokiConnector(cfg config.Config, logger *logging.Logger) (*LokiConnector
 			return nil, fmt.Errorf("Failed to get connection max wait time from configuration file at loki/max_wait_time")
 		}
 	case *config.JSONConfig:
-		if addr, err := conf.GetOption("Loki.Connection.Address"); err == nil {
+		if addr, err := conf.GetOption("Loki.Connection.Address"); err == nil && addr != nil {
 			client.url = addr.GetString()
 		} else {
 			return nil, fmt.Errorf("Failed to get connection URL from configuration file at Loki.Connection.Address: %s", err)
 		}
-		if batchSize, err := conf.GetOption("Loki.Connection.BatchSize"); err == nil {
+		if batchSize, err := conf.GetOption("Loki.Connection.BatchSize"); err == nil && batchSize != nil {
 			client.maxBatch = batchSize.GetInt()
 		} else {
 			return nil, fmt.Errorf("Failed to get connection max batch size from configuration file at Loki.Connection.BatchSize: %s", err)
 		}
-		if waitTime, err := conf.GetOption("Loki.Connection.MaxWaitTime"); err == nil {
+		if waitTime, err := conf.GetOption("Loki.Connection.MaxWaitTime"); err == nil && waitTime != nil {
 			client.maxWaitTime = time.Duration(waitTime.GetInt()) * time.Millisecond
 		} else {
 			return nil, fmt.Errorf("Failed to get connection max wait time from configuration file at Loki.Connection.MaxWaitTime: %s", err)
