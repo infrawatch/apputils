@@ -254,27 +254,18 @@ func (conn *AMQP10Connector) Start(outchan chan interface{}, inchan chan interfa
 				m.Marshal(message.Body)
 
 				ackChan := sender.SendWaitable(m)
-				timeout := int(conn.SendTimeout * 1000)
-				sleepTime := 10
+				timer := time.NewTimer(time.Duration(conn.SendTimeout) * time.Second)
 
-				timeoutLoop:
-				for timeout > 0 {
-					select {
-					case ack := <-ackChan:
-						if ack.Status != 2 {
-							conn.logger.Metadata(map[string]interface{}{
-								"message": m,
-								"ack":     ack,
-							})
-							conn.logger.Warn("Sent message was not ACKed")
-							break timeoutLoop
-						}
-					default:
-						timeout -= sleepTime
-						time.Sleep(time.Duration(sleepTime) * time.Millisecond)
+				select {
+				case ack := <-ackChan:
+					if ack.Status != 2 {
+						conn.logger.Metadata(map[string]interface{}{
+							"message": m,
+							"ack":     ack,
+						})
+						conn.logger.Warn("Sent message was not ACKed")
 					}
-				}
-				if timeout <= 0 {
+				case <-timer.C:
 					conn.logger.Metadata(map[string]interface{}{
 						"message": m,
 					})
