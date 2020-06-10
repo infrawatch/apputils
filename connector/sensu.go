@@ -283,7 +283,7 @@ func (conn *SensuConnector) Start(outchan chan interface{}, inchan chan interfac
 				}
 			default:
 				conn.logger.Metadata(map[string]interface{}{"type": fmt.Sprintf("%T", res)})
-				conn.logger.Error("Received execution result with invalid type.")
+				conn.logger.Debug("Received execution result with invalid type.")
 			}
 		}
 	}()
