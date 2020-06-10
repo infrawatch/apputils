@@ -193,7 +193,7 @@ func (conn *AMQP10Connector) processIncomingMessage(msg interface{}, outchan cha
 		conn.logger.Metadata(map[string]interface{}{
 			"message": typedBody,
 		})
-		conn.logger.Info("Skipped processing of received AMQP1.0 message with invalid type")
+		conn.logger.Debug("Skipped processing of received AMQP1.0 message with invalid type")
 		outchan <- message
 	}
 }
