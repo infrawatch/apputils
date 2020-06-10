@@ -52,7 +52,7 @@ func IntValidatorFactory() Validator {
 		case reflect.Int32:
 			fallthrough
 		case reflect.Int64:
-			return reflect.ValueOf(input).Elem(), nil
+			return reflect.ValueOf(input), nil
 		case reflect.Float64:
 			return int64(input.(float64)), nil
 		case reflect.String:

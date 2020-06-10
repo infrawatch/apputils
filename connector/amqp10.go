@@ -269,7 +269,7 @@ func (conn *AMQP10Connector) Start(outchan chan interface{}, inchan chan interfa
 				conn.logger.Metadata(map[string]interface{}{
 					"message": msg,
 				})
-				conn.logger.Info("Skipped processing of sent AMQP1.0 message with invalid type")
+				conn.logger.Debug("Skipped processing of sent AMQP1.0 message with invalid type")
 			}
 		}
 	}()
