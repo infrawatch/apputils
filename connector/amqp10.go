@@ -175,6 +175,29 @@ func (conn *AMQP10Connector) Disconnect() {
 	conn.logger.Debug("Closed connections")
 }
 
+func (conn *AMQP10Connector) processIncomingMessage(msg interface{}, outchan chan interface{}, source string) {
+	message := AMQP10Message{Address: source}
+	switch typedBody := msg.(type) {
+	case amqp.List:
+		conn.logger.Debug("Received message is a list, recursevily diving inside it.")
+		for _, element := range typedBody {
+			conn.processIncomingMessage(element, outchan, source)
+		}
+	case amqp.Binary:
+		message.Body = typedBody.String()
+		outchan <- message
+	case string:
+		message.Body = typedBody
+		outchan <- message
+	default:
+		conn.logger.Metadata(map[string]interface{}{
+			"message": typedBody,
+		})
+		conn.logger.Debug("Skipped processing of received AMQP1.0 message with invalid type")
+		outchan <- message
+	}
+}
+
 //Start starts all processing loops. Channel outchan will contain received AMQP10Message from AMQP1.0 node
 // and through inchan AMQP10Message are sent to configured AMQP1.0 node
 func (conn *AMQP10Connector) Start(outchan chan interface{}, inchan chan interface{}) {
@@ -184,20 +207,8 @@ func (conn *AMQP10Connector) Start(outchan chan interface{}, inchan chan interfa
 			for {
 				if msg, err := receiver.Receive(); err == nil {
 					msg.Accept()
-					message := AMQP10Message{Address: receiver.Source()}
-					switch typedBody := msg.Message.Body().(type) {
-					case amqp.Binary:
-						message.Body = typedBody.String()
-					case string:
-						message.Body = typedBody
-					default:
-						conn.logger.Metadata(map[string]interface{}{
-							"message": typedBody,
-						})
-						conn.logger.Info("Skipped processing of received AMQP1.0 message with invalid type")
-					}
+					conn.processIncomingMessage(msg.Message.Body(), outchan, receiver.Source())
 					conn.logger.Debug("Message ACKed")
-					outchan <- message
 				} else if err == electron.Closed {
 					conn.logger.Metadata(map[string]interface{}{
 						"connection": conn.Address,
@@ -243,23 +254,18 @@ func (conn *AMQP10Connector) Start(outchan chan interface{}, inchan chan interfa
 				m.Marshal(message.Body)
 
 				ackChan := sender.SendWaitable(m)
-				timeout := conn.SendTimeout
-				for timeout > 0 {
-					select {
-					case ack := <-ackChan:
-						if ack.Status != 2 {
-							conn.logger.Metadata(map[string]interface{}{
-								"message": m,
-								"ack":     ack,
-							})
-							conn.logger.Warn("Sent message was not ACKed")
-						}
-					default:
-						timeout -= 1
-						time.Sleep(time.Second)
+				timer := time.NewTimer(time.Duration(conn.SendTimeout) * time.Second)
+
+				select {
+				case ack := <-ackChan:
+					if ack.Status != 2 {
+						conn.logger.Metadata(map[string]interface{}{
+							"message": m,
+							"ack":     ack,
+						})
+						conn.logger.Warn("Sent message was not ACKed")
 					}
-				}
-				if timeout <= 0 {
+				case <-timer.C:
 					conn.logger.Metadata(map[string]interface{}{
 						"message": m,
 					})
