@@ -28,7 +28,14 @@ func (opt *Option) GetString() string {
 //GetBytes returns option value as slice of bytes.
 func (opt *Option) GetBytes() []byte {
 	val := reflect.ValueOf(opt.value)
-	return val.Bytes()
+	switch reflect.TypeOf(opt.value).Kind() {
+	case reflect.Array:
+		fallthrough
+	case reflect.Slice:
+		return val.Bytes()
+	default:
+		return []byte(val.String())
+	}
 }
 
 //GetStrings returns option value as slice of strings. Use this for value in form of <separator> separated list of strings.
