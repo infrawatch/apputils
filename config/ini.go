@@ -46,6 +46,15 @@ func (conf INIConfig) Parse(path string) error {
 					return err
 				}
 			}
+		} else {
+			// default values for the whole section
+			for _, param := range sectionMetadata {
+				if opt, err := createOption(nil, param, conf.log); err == nil {
+					conf.Sections[sectionName].Options[param.Name] = opt
+				} else {
+					return err
+				}
+			}
 		}
 	}
 	return nil
