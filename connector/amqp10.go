@@ -30,6 +30,9 @@ type AMQP10Message struct {
 //NewAMQP10Connector creates new AMQP1.0 connector from the given configuration file
 func NewAMQP10Connector(cfg config.Config, logger *logging.Logger) (*AMQP10Connector, error) {
 	connector := AMQP10Connector{}
+	connector.receivers = make([]electron.Receiver, 0)
+	connector.logger = logger
+
 	switch conf := cfg.(type) {
 	case *config.INIConfig:
 		if addr, err := conf.GetOption("amqp1/connection"); err == nil {
@@ -42,20 +45,30 @@ func NewAMQP10Connector(cfg config.Config, logger *logging.Logger) (*AMQP10Conne
 		} else {
 			return &connector, fmt.Errorf("Failed to get send timeout from configuration file at amqp1/send_timeout: %s", err)
 		}
+		if clientName, err := conf.GetOption("amqp1/client_name"); err == nil {
+			connector.ClientName = clientName.GetString()
+		} else {
+			return &connector, fmt.Errorf("Failed to get client name from configuration file at amqp1/client_name: %s", err)
+		}
 		if listen, err := conf.GetOption("amqp1/listen_channels"); err == nil {
+			if err := connector.Connect(); err != nil {
+				return &connector, fmt.Errorf("Error while connecting to AMQP")
+			}
 			prefetch := int64(-1)
 			prf, err := conf.GetOption("amqp1/listen_prefetch")
 			if err == nil {
 				prefetch = prf.GetInt()
 			}
 			for _, channel := range listen.GetStrings(",") {
-				connector.CreateReceiver(channel, int(prefetch))
+				logger.Metadata(map[string]interface{}{
+					"channel":  channel,
+					"prefetch": prefetch,
+				})
+				logger.Debug("Creating AMQP receiver for channel")
+				if err := connector.CreateReceiver(channel, int(prefetch)); err != nil {
+					return &connector, fmt.Errorf("Failed to create receiver: %s", err)
+				}
 			}
-		}
-		if clientName, err := conf.GetOption("amqp1/client_name"); err == nil {
-			connector.ClientName = clientName.GetString()
-		} else {
-			return &connector, fmt.Errorf("Failed to get client name from configuration file at amqp1/client_name: %s", err)
 		}
 	case *config.JSONConfig:
 		if addr, err := conf.GetOption("Amqp1.Connection.Address"); err == nil && addr != nil {
@@ -68,27 +81,35 @@ func NewAMQP10Connector(cfg config.Config, logger *logging.Logger) (*AMQP10Conne
 		} else {
 			return &connector, fmt.Errorf("Failed to get send timeout from configuration file at Amqp1.Connection.SendTimeout: %s", err)
 		}
+		if clientName, err := conf.GetOption("Amqp1.Client.Name"); err == nil && clientName != nil {
+			connector.ClientName = clientName.GetString()
+		} else {
+			return &connector, fmt.Errorf("Failed to get client name from configuration file at Amqp1.Client.Name: %s", err)
+		}
+		connector.receivers = make([]electron.Receiver, 0)
 		if listen, err := conf.GetOption("Amqp1.Connection.ListenChannels"); err == nil && listen != nil {
+			if err := connector.Connect(); err != nil {
+				return &connector, fmt.Errorf("Error while connecting to AMQP")
+			}
 			prefetch := int64(-1)
 			prf, err := conf.GetOption("Amqp1.Connection.ListenPrefetch")
 			if err == nil && prf != nil {
 				prefetch = prf.GetInt()
 			}
 			for _, channel := range listen.GetStrings(",") {
-				connector.CreateReceiver(channel, int(prefetch))
+				logger.Metadata(map[string]interface{}{
+					"channel":  channel,
+					"prefetch": prefetch,
+				})
+				logger.Debug("Creating AMQP receiver for channel")
+				if err := connector.CreateReceiver(channel, int(prefetch)); err != nil {
+					return &connector, fmt.Errorf("Failed to create receiver: %s", err)
+				}
 			}
-		}
-		if clientName, err := conf.GetOption("Amqp1.Client.Name"); err == nil && clientName != nil {
-			connector.ClientName = clientName.GetString()
-		} else {
-			return &connector, fmt.Errorf("Failed to get client name from configuration file at Amqp1.Client.Name: %s", err)
 		}
 	default:
 		return &connector, fmt.Errorf("Unknown Config type")
 	}
-
-	connector.receivers = make([]electron.Receiver, 0)
-	connector.logger = logger
 	return &connector, nil
 }
 
