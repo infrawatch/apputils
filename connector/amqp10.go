@@ -27,89 +27,92 @@ type AMQP10Message struct {
 	Body    string
 }
 
-//NewAMQP10Connector creates new AMQP1.0 connector from the given configuration file
-func NewAMQP10Connector(cfg config.Config, logger *logging.Logger) (*AMQP10Connector, error) {
+//ConnectAMQP10 creates new AMQP1.0 connector from the given configuration file
+func ConnectAMQP10(cfg config.Config, logger *logging.Logger) (*AMQP10Connector, error) {
 	connector := AMQP10Connector{}
 	connector.receivers = make([]electron.Receiver, 0)
 	connector.logger = logger
 
+	var err error
+	// pre-connect initialization
+	var addr *config.Option
 	switch conf := cfg.(type) {
 	case *config.INIConfig:
-		if addr, err := conf.GetOption("amqp1/connection"); err == nil {
-			connector.Address = addr.GetString()
-		} else {
-			return &connector, fmt.Errorf("Failed to get connection URL from configuration file at amqp1/connection: %s", err)
-		}
-		if sendTimeout, err := conf.GetOption("amqp1/send_timeout"); err == nil {
-			connector.SendTimeout = sendTimeout.GetInt()
-		} else {
-			return &connector, fmt.Errorf("Failed to get send timeout from configuration file at amqp1/send_timeout: %s", err)
-		}
-		if clientName, err := conf.GetOption("amqp1/client_name"); err == nil {
-			connector.ClientName = clientName.GetString()
-		} else {
-			return &connector, fmt.Errorf("Failed to get client name from configuration file at amqp1/client_name: %s", err)
-		}
-		if listen, err := conf.GetOption("amqp1/listen_channels"); err == nil {
-			if err := connector.Connect(); err != nil {
-				return &connector, fmt.Errorf("Error while connecting to AMQP")
-			}
-			prefetch := int64(-1)
-			prf, err := conf.GetOption("amqp1/listen_prefetch")
-			if err == nil {
-				prefetch = prf.GetInt()
-			}
-			for _, channel := range listen.GetStrings(",") {
-				logger.Metadata(map[string]interface{}{
-					"channel":  channel,
-					"prefetch": prefetch,
-				})
-				logger.Debug("Creating AMQP receiver for channel")
-				if err := connector.CreateReceiver(channel, int(prefetch)); err != nil {
-					return &connector, fmt.Errorf("Failed to create receiver: %s", err)
-				}
-			}
-		}
+		addr, err = conf.GetOption("amqp1/connection")
 	case *config.JSONConfig:
-		if addr, err := conf.GetOption("Amqp1.Connection.Address"); err == nil && addr != nil {
-			connector.Address = addr.GetString()
-		} else {
-			return &connector, fmt.Errorf("Failed to get connection URL from configuration file at Amqp1.Connection.Address: %s", err)
-		}
-		if sendTimeout, err := conf.GetOption("Amqp1.Connection.SendTimeout"); err == nil && sendTimeout != nil {
-			connector.SendTimeout = sendTimeout.GetInt()
-		} else {
-			return &connector, fmt.Errorf("Failed to get send timeout from configuration file at Amqp1.Connection.SendTimeout: %s", err)
-		}
-		if clientName, err := conf.GetOption("Amqp1.Client.Name"); err == nil && clientName != nil {
-			connector.ClientName = clientName.GetString()
-		} else {
-			return &connector, fmt.Errorf("Failed to get client name from configuration file at Amqp1.Client.Name: %s", err)
-		}
-		connector.receivers = make([]electron.Receiver, 0)
-		if listen, err := conf.GetOption("Amqp1.Connection.ListenChannels"); err == nil && listen != nil {
-			if err := connector.Connect(); err != nil {
-				return &connector, fmt.Errorf("Error while connecting to AMQP")
-			}
-			prefetch := int64(-1)
-			prf, err := conf.GetOption("Amqp1.Connection.ListenPrefetch")
-			if err == nil && prf != nil {
-				prefetch = prf.GetInt()
-			}
-			for _, channel := range listen.GetStrings(",") {
-				logger.Metadata(map[string]interface{}{
-					"channel":  channel,
-					"prefetch": prefetch,
-				})
-				logger.Debug("Creating AMQP receiver for channel")
-				if err := connector.CreateReceiver(channel, int(prefetch)); err != nil {
-					return &connector, fmt.Errorf("Failed to create receiver: %s", err)
-				}
-			}
-		}
+		addr, err = conf.GetOption("Amqp1.Connection.Address")
 	default:
 		return &connector, fmt.Errorf("Unknown Config type")
 	}
+	if err == nil && addr != nil {
+		connector.Address = addr.GetString()
+	} else {
+		return &connector, fmt.Errorf("Failed to get connection URL from configuration file: %s", err)
+	}
+
+	var sendTimeout *config.Option
+	switch conf := cfg.(type) {
+	case *config.INIConfig:
+		sendTimeout, err = conf.GetOption("amqp1/send_timeout")
+	case *config.JSONConfig:
+		sendTimeout, err = conf.GetOption("Amqp1.Connection.SendTimeout")
+	}
+	if err == nil && sendTimeout != nil {
+		connector.SendTimeout = sendTimeout.GetInt()
+	} else {
+		return &connector, fmt.Errorf("Failed to get send timeout from configuration file: %s", err)
+	}
+
+	var clientName *config.Option
+	switch conf := cfg.(type) {
+	case *config.INIConfig:
+		clientName, err = conf.GetOption("amqp1/client_name")
+	case *config.JSONConfig:
+		clientName, err = conf.GetOption("Amqp1.Client.Name")
+	}
+	if err == nil && clientName != nil {
+		connector.ClientName = clientName.GetString()
+	} else {
+		return &connector, fmt.Errorf("Failed to get client name from configuration file: %s", err)
+	}
+
+	// connect
+	if err := connector.Connect(); err != nil {
+		return &connector, fmt.Errorf("Error while connecting to AMQP")
+	}
+
+	// post-connect initialization
+	var listen *config.Option
+	switch conf := cfg.(type) {
+	case *config.INIConfig:
+		listen, err = conf.GetOption("amqp1/listen_channels")
+	case *config.JSONConfig:
+		listen, err = conf.GetOption("Amqp1.Connection.ListenChannels")
+	}
+	if err == nil && listen != nil {
+		var prf *config.Option
+		switch conf := cfg.(type) {
+		case *config.INIConfig:
+			prf, err = conf.GetOption("amqp1/listen_prefetch")
+		case *config.JSONConfig:
+			prf, err = conf.GetOption("Amqp1.Connection.ListenPrefetch")
+		}
+		prefetch := int64(-1)
+		if err == nil && prf != nil {
+			prefetch = prf.GetInt()
+		}
+		for _, channel := range listen.GetStrings(",") {
+			logger.Metadata(map[string]interface{}{
+				"channel":  channel,
+				"prefetch": prefetch,
+			})
+			logger.Debug("Creating AMQP receiver for channel")
+			if err := connector.CreateReceiver(channel, int(prefetch)); err != nil {
+				return &connector, fmt.Errorf("Failed to create receiver: %s", err)
+			}
+		}
+	}
+
 	return &connector, nil
 }
 
