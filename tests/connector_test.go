@@ -33,10 +33,37 @@ const (
 			"BatchSize": 4,
 			"MaxWaitTime": 50
 		}
+	},
+	"Socket": {
+		"In": {
+			"Address": "/tmp/socktest"
+		},
+		"Out": {
+			"Address": "/tmp/socktest"
+		}
+	}
+}
+`
+	ConfigContent2 = `{
+	"Socket": {
+		"In": {
+			"Address": "/tmp/socktest1"
+		}
+	}
+}
+`
+	ConfigContent3 = `{
+	"Socket": {
+		"Out": {
+			"Address": "/tmp/socktest1"
+		}
 	}
 }
 `
 )
+type MockedSocket struct {
+	Address     string
+}
 
 type MockedConnection struct {
 	Address     string
@@ -51,6 +78,85 @@ type MockedLokiConnection struct {
 	Address     string
 	BatchSize   int
 	MaxWaitTime int
+}
+
+func TestUnixSocketSendAndReceiveMessage(t *testing.T) {
+	tmpdir, err := ioutil.TempDir(".", "connector_test_tmp")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer os.RemoveAll(tmpdir)
+	logpath := path.Join(tmpdir, "test.log")
+	logger, err := logging.NewLogger(logging.DEBUG, logpath)
+	if err != nil {
+		t.Fatalf("Failed to open log file %s. %s\n", logpath, err)
+	}
+	defer logger.Destroy()
+
+	metadata := map[string][]config.Parameter{
+		"Socket": []config.Parameter{},
+	}
+	cfg := config.NewJSONConfig(metadata, logger)
+	cfg.AddStructured("Socket", "In", ``, MockedSocket{})
+	cfg.AddStructured("Socket", "Out", ``, MockedSocket{})
+
+	// bidirectional
+	err = cfg.ParseBytes([]byte(ConfigContent))
+	if err != nil {
+		t.Fatalf("Failed to parse config file: %s", err)
+	}
+
+	socket, err := connector.ConnectUnixSocket(cfg, logger)
+	if err != nil {
+		t.Fatalf("Failed to create the socket connector: %s", err)
+	}
+
+	receiver := make(chan interface{})
+	sender := make(chan interface{})
+	socket.Start(receiver, sender)
+
+	// in
+	err = cfg.ParseBytes([]byte(ConfigContent2))
+	if err != nil {
+		t.Fatalf("Failed to parse config file: %s", err)
+	}
+
+	socketIn, err := connector.ConnectUnixSocket(cfg, logger)
+	if err != nil {
+		t.Fatalf("Failed to create the socket connector: %s", err)
+	}
+
+	receiverIn := make(chan interface{})
+	senderIn := make(chan interface{})
+	socketIn.Start(receiverIn, senderIn)
+
+	// out
+	err = cfg.ParseBytes([]byte(ConfigContent3))
+	if err != nil {
+		t.Fatalf("Failed to parse config file: %s", err)
+	}
+
+	socketOut, err := connector.ConnectUnixSocket(cfg, logger)
+	if err != nil {
+		t.Fatalf("Failed to create the socket connector: %s", err)
+	}
+
+	receiverOut := make(chan interface{})
+	senderOut := make(chan interface{})
+	socketOut.Start(receiverOut, senderOut)
+
+	t.Run("Test socket bidirectional.", func(t *testing.T) {
+		t.Parallel()
+		sender <- "hi socket, this is socket"
+		data := <-receiver
+		assert.Equal(t, "hi socket, this is socket", data.(string))
+	})
+	t.Run("Test socket unidirectional.", func(t *testing.T) {
+		t.Parallel()
+		senderOut <- "hi socket receiver, this is socket sender"
+		data := <-receiverIn
+		assert.Equal(t, "hi socket receiver, this is socket sender", data.(string))
+	})
 }
 
 func TestAMQP10SendAndReceiveMessage(t *testing.T) {
