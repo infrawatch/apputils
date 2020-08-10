@@ -12,25 +12,34 @@ import (
 	"qpid.apache.org/electron"
 )
 
+//AMQP10Receiver is tagged electron receiver
+type AMQP10Receiver struct {
+	Receiver electron.Receiver
+	Tags     []string
+}
+
+//LokiConnector is the object to be used for communication with AMQP-1.0 entity
 type AMQP10Connector struct {
 	Address       string
 	ClientName    string
 	SendTimeout   int64
 	inConnection  electron.Connection
 	outConnection electron.Connection
-	receivers     []electron.Receiver
+	receivers     []AMQP10Receiver
 	logger        *logging.Logger
 }
 
+//AMQP10Message holds received (or to be sent) messages from (to) AMQP-1.0 entity
 type AMQP10Message struct {
 	Address string
 	Body    string
+	Tags    []string
 }
 
 //ConnectAMQP10 creates new AMQP1.0 connector from the given configuration file
 func ConnectAMQP10(cfg config.Config, logger *logging.Logger) (*AMQP10Connector, error) {
 	connector := AMQP10Connector{}
-	connector.receivers = make([]electron.Receiver, 0)
+	connector.receivers = make([]AMQP10Receiver, 0)
 	connector.logger = logger
 
 	var err error
@@ -156,7 +165,9 @@ func (conn *AMQP10Connector) Connect() error {
 //CreateReceiver creates electron.Receiver for given address
 func (conn *AMQP10Connector) CreateReceiver(address string, prefetch int) error {
 	addr := strings.TrimPrefix(address, "/")
-	opts := []electron.LinkOption{electron.Source(addr)}
+	parts := strings.Split(addr, ":")
+
+	opts := []electron.LinkOption{electron.Source(parts[0])}
 	if prefetch > 0 {
 		conn.logger.Metadata(map[string]interface{}{
 			"address":  address,
@@ -170,7 +181,7 @@ func (conn *AMQP10Connector) CreateReceiver(address string, prefetch int) error 
 		return fmt.Errorf("Connection to AMQP-1.0 node has to be created first.")
 	}
 	if rcv, err := conn.inConnection.Receiver(opts...); err == nil {
-		conn.receivers = append(conn.receivers, rcv)
+		conn.receivers = append(conn.receivers, AMQP10Receiver{rcv, parts[1:]})
 	} else {
 		conn.logger.Metadata(map[string]interface{}{
 			"address": address,
@@ -199,13 +210,13 @@ func (conn *AMQP10Connector) Disconnect() {
 	conn.logger.Debug("Closed connections")
 }
 
-func (conn *AMQP10Connector) processIncomingMessage(msg interface{}, outchan chan interface{}, source string) {
-	message := AMQP10Message{Address: source}
+func (conn *AMQP10Connector) processIncomingMessage(msg interface{}, outchan chan interface{}, receiver AMQP10Receiver) {
+	message := AMQP10Message{Address: receiver.Receiver.Source(), Tags: receiver.Tags}
 	switch typedBody := msg.(type) {
 	case amqp.List:
 		conn.logger.Debug("Received message is a list, recursevily diving inside it.")
 		for _, element := range typedBody {
-			conn.processIncomingMessage(element, outchan, source)
+			conn.processIncomingMessage(element, outchan, receiver)
 		}
 	case amqp.Binary:
 		message.Body = typedBody.String()
@@ -227,23 +238,24 @@ func (conn *AMQP10Connector) processIncomingMessage(msg interface{}, outchan cha
 func (conn *AMQP10Connector) Start(outchan chan interface{}, inchan chan interface{}) {
 	//create listening goroutine for each receiver
 	for _, rcv := range conn.receivers {
-		go func(receiver electron.Receiver) {
+		go func(receiver AMQP10Receiver) {
 			for {
-				if msg, err := receiver.Receive(); err == nil {
+				if msg, err := receiver.Receiver.Receive(); err == nil {
 					msg.Accept()
-					conn.processIncomingMessage(msg.Message.Body(), outchan, receiver.Source())
+					conn.processIncomingMessage(msg.Message.Body(), outchan, receiver)
 					conn.logger.Debug("Message ACKed")
 				} else if err == electron.Closed {
 					conn.logger.Metadata(map[string]interface{}{
 						"connection": conn.Address,
-						"address":    receiver.Source(),
+						"address":    receiver.Receiver.Source(),
 					})
 					conn.logger.Warn("Channel closed, closing receiver loop")
+					//TODO: send message to (future) reconnect loop, where it Reconnect and Start again
 					return
 				} else {
 					conn.logger.Metadata(map[string]interface{}{
 						"connection": conn.Address,
-						"address":    receiver.Source(),
+						"address":    receiver.Receiver.Source(),
 						"error":      err,
 					})
 					conn.logger.Error("Received AMQP1.0 error")
