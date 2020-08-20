@@ -77,6 +77,18 @@ func (l *Logger) Metadata(metadata map[string]interface{}) {
 	l.metadata = metadata
 }
 
+// SetFile ..
+func (l *Logger) SetFile(path string, permissions os.FileMode) error {
+	newLogfile, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_APPEND, permissions)
+	if err != nil {
+		l.Warn("Couldn't open new log file, leaving the old one")
+		return err
+	}
+	l.logfile.Close()
+	l.logfile = newLogfile
+	return nil
+}
+
 func (l *Logger) formatMetadata() (string, error) {
 	//var build strings.Builder
 	// Note: we need to support go-1.9.2 because of CentOS7
@@ -164,4 +176,3 @@ func (l *Logger) Error(message string) error {
 	}
 	return nil
 }
-
