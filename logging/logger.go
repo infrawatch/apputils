@@ -77,15 +77,50 @@ func (l *Logger) Metadata(metadata map[string]interface{}) {
 	l.metadata = metadata
 }
 
-// SetFile ..
+// SetLogLevel ..
+func (l *Logger) SetLogLevel(level LogLevel) {
+	l.Level = level
+}
+
+// SetConsole sets logger target to console
+func (l *Logger) SetConsole() {
+	if l.logfile != nil {
+		err := l.logfile.Close()
+		if err != nil {
+			l.Warn("Failed to close old log file")
+		}
+		l.logfile = nil
+	}
+
+	l.write = func(message string) error {
+		fmt.Print(message)
+		return nil
+	}
+}
+
+// SetFile sets logfile. If logger target was console, switch to file mode
 func (l *Logger) SetFile(path string, permissions os.FileMode) error {
 	newLogfile, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_APPEND, permissions)
 	if err != nil {
 		l.Warn("Couldn't open new log file, leaving the old one")
 		return err
 	}
-	l.logfile.Close()
+
+	if l.logfile != nil {
+		err = l.logfile.Close()
+		if err != nil {
+			l.Warn("Failed to close old log file")
+		}
+		l.logfile = newLogfile
+		return nil
+	}
+
+	//target was console
 	l.logfile = newLogfile
+	l.write = func(message string) error {
+		_, err := l.logfile.WriteString(message)
+		return err
+	}
 	return nil
 }
 
