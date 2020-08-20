@@ -9,7 +9,7 @@ import (
 	"path"
 	"testing"
 
-	"github.com/paramite/collectd-sensubility/logging"
+	"github.com/infrawatch/apputils/logging"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -53,6 +53,7 @@ func TestLogger(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpdir)
 	logpath := path.Join(tmpdir, "test.log")
+	logpath2 := path.Join(tmpdir, "test2.log")
 	log, err := logging.NewLogger(logging.DEBUG, logpath)
 	if err != nil {
 		t.Fatalf("Failed to create logger: %s", err)
@@ -179,6 +180,56 @@ func TestLogger(t *testing.T) {
 			t.Fatalf("Failed to fetch last line in log file: %s", err)
 		}
 		assert.Equal(t, "[ERROR] Test error 4\n", actual)
+	})
+
+	t.Run("Test SetFile", func(t *testing.T) {
+		log.Level = logging.ERROR
+
+		lastInFile1, err := getLastLineWithSeek(logpath)
+		if err != nil {
+			t.Fatalf("Failed to fetch last line in log file: %s", err)
+		}
+
+		err = log.SetFile(logpath2, 0666)
+		if err != nil {
+			t.Fatalf("Failed switching log files: %s", err)
+		}
+		log.Error("Test SetFile")
+
+		actualInFile1, err := getLastLineWithSeek(logpath)
+		if err != nil {
+			t.Fatalf("Failed to fetch last line in log file: %s", err)
+		}
+
+		assert.Equal(t, lastInFile1, actualInFile1)
+
+		actualInFile2, err := getLastLineWithSeek(logpath2)
+		if err != nil {
+			t.Fatalf("Failed to fetch last line in log file: %s", err)
+		}
+
+		assert.Equal(t, "[ERROR] Test SetFile\n", actualInFile2)
+
+		// change it back
+		err = log.SetFile(logpath, 0666)
+		if err != nil {
+			t.Fatalf("Failed switching log files: %s", err)
+		}
+		log.Error("Test SetFile2")
+
+		actualInFile1, err = getLastLineWithSeek(logpath)
+		if err != nil {
+			t.Fatalf("Failed to fetch last line in log file: %s", err)
+		}
+
+		assert.Equal(t, "[ERROR] Test SetFile2\n", actualInFile1)
+
+		actualInFile2, err = getLastLineWithSeek(logpath2)
+		if err != nil {
+			t.Fatalf("Failed to fetch last line in log file: %s", err)
+		}
+
+		assert.Equal(t, "[ERROR] Test SetFile\n", actualInFile2)
 	})
 
 	t.Run("Test metadata", func(t *testing.T) {
