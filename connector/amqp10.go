@@ -111,6 +111,9 @@ func ConnectAMQP10(cfg config.Config, logger *logging.Logger) (*AMQP10Connector,
 			prefetch = prf.GetInt()
 		}
 		for _, channel := range listen.GetStrings(",") {
+			if len(channel) < 1 {
+				continue
+			}
 			logger.Metadata(map[string]interface{}{
 				"channel":  channel,
 				"prefetch": prefetch,
