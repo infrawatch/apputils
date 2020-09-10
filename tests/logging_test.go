@@ -182,6 +182,20 @@ func TestLogger(t *testing.T) {
 		assert.Equal(t, "[ERROR] Test error 4\n", actual)
 	})
 
+	t.Run("Test SetConsole", func(t *testing.T) {
+		log.Level = logging.INFO
+		testStr := "should not be in logfile"
+		log.SetConsole()
+
+		lastInFile1, err := getLastLineWithSeek(logpath)
+		if err != nil {
+			t.Fatalf("Failed to fetch last line in log file: %s", err)
+		}
+
+		log.Info(testStr)
+		assert.NotEqual(t, lastInFile1, testStr)
+	})
+
 	t.Run("Test SetFile", func(t *testing.T) {
 		log.Level = logging.ERROR
 
