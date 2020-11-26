@@ -8,8 +8,8 @@ import (
 	"github.com/infrawatch/apputils/config"
 	"github.com/infrawatch/apputils/logging"
 
-	"qpid.apache.org/amqp"
-	"qpid.apache.org/electron"
+	"github.com/apache/qpid-proton/go/pkg/amqp"
+	"github.com/apache/qpid-proton/go/pkg/electron"
 )
 
 //AMQP10Receiver is tagged electron receiver
