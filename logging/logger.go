@@ -18,6 +18,9 @@ const (
 	ERROR
 )
 
+//Metadata convenience type for setting metadata
+type Metadata map[string]interface{}
+
 func (l LogLevel) String() string {
 	return [...]string{"DEBUG", "INFO", "WARN", "ERROR"}[l]
 }
@@ -176,6 +179,7 @@ func (l *Logger) writeRecord(level LogLevel, message string) error {
 	if err != nil {
 		return nil
 	}
+    l.metadata = Metadata{} //clear metadata
 	err = l.write(build.String())
 	return err
 }
