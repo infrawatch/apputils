@@ -3,6 +3,7 @@ package connector
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/infrawatch/apputils/config"
@@ -212,6 +213,7 @@ func (conn *SensuConnector) Connect() error {
 	}
 
 	// bind client queue with subscriptions
+	failed := []string{}
 	for _, sub := range conn.Subscription {
 		err := conn.inChannel.QueueBind(
 			conn.queue.Name, // queue name
@@ -221,8 +223,13 @@ func (conn *SensuConnector) Connect() error {
 			nil,
 		)
 		if err != nil {
-			return err
+			failed = append(failed, err.Error())
+			conn.logger.Metadata(logging.Metadata{"subscription": sub, "error": err})
+			conn.logger.Warn("Failed to subscribe.")
 		}
+	}
+	if len(failed) == len(conn.Subscription) {
+		return fmt.Errorf("Failed to subscribe to all channels: %s", strings.Join(failed, "; "))
 	}
 
 	return nil
@@ -255,7 +262,7 @@ func (conn *SensuConnector) Start(outchan chan interface{}, inchan chan interfac
 			if err == nil {
 				outchan <- request
 			} else {
-				conn.logger.Metadata(map[string]interface{}{"error": err, "request-body": req.Body})
+				conn.logger.Metadata(logging.Metadata{"error": err, "request-body": req.Body})
 				conn.logger.Warn("Failed to unmarshal request body.")
 			}
 		}
@@ -268,7 +275,7 @@ func (conn *SensuConnector) Start(outchan chan interface{}, inchan chan interfac
 			case CheckResult:
 				body, err := json.Marshal(result)
 				if err != nil {
-					conn.logger.Metadata(map[string]interface{}{"error": err})
+					conn.logger.Metadata(logging.Metadata{"error": err})
 					conn.logger.Error("Failed to marshal execution result.")
 					continue
 				}
@@ -286,11 +293,11 @@ func (conn *SensuConnector) Start(outchan chan interface{}, inchan chan interfac
 						Priority:        0,              // 0-9
 					})
 				if err != nil {
-					conn.logger.Metadata(map[string]interface{}{"error": err})
+					conn.logger.Metadata(logging.Metadata{"error": err})
 					conn.logger.Error("Failed to publish execution result.")
 				}
 			default:
-				conn.logger.Metadata(map[string]interface{}{"type": fmt.Sprintf("%T", res)})
+				conn.logger.Metadata(logging.Metadata{"type": fmt.Sprintf("%T", res)})
 				conn.logger.Debug("Received execution result with invalid type.")
 			}
 		}
@@ -307,7 +314,7 @@ func (conn *SensuConnector) Start(outchan chan interface{}, inchan chan interfac
 				Timestamp:    time.Now().Unix(),
 			})
 			if err != nil {
-				conn.logger.Metadata(map[string]interface{}{"error": err})
+				conn.logger.Metadata(logging.Metadata{"error": err})
 				conn.logger.Error("Failed to marshal keepalive body.")
 				continue
 			}
@@ -325,7 +332,7 @@ func (conn *SensuConnector) Start(outchan chan interface{}, inchan chan interfac
 					Priority:        0,              // 0-9
 				})
 			if err != nil {
-				conn.logger.Metadata(map[string]interface{}{"error": err})
+				conn.logger.Metadata(logging.Metadata{"error": err})
 				conn.logger.Error("Failed to publish keepalive body.")
 			}
 			time.Sleep(time.Duration(conn.KeepaliveInterval) * time.Second)
