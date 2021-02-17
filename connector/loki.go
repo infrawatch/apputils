@@ -51,17 +51,17 @@ type jsonMessage struct {
 
 //LokiConnector is the object to be used for communication with Loki
 type LokiConnector struct {
-	url            string
-	endpoints      endpoints
-	currentMessage jsonMessage
-	streams        chan *LokiStream
-	quit           chan struct{}
-	maxBatch       int64
-	maxWaitTime    time.Duration
-	wait           sync.WaitGroup
-	batchCounter   int64
-	timer          *time.Timer
-	logger         *logging.Logger
+	Url            string
+	Endpoints      Endpoints
+	CurrentMessage jsonMessage
+	Streams        chan *LokiStream
+	Quit           chan struct{}
+	MaxBatch       int64
+	MaxWaitTime    time.Duration
+	Wait           sync.WaitGroup
+	BatchCounter   int64
+	Timer          *time.Timer
+	Logger         *logging.Logger
 }
 
 //Message hold structure for Loki API messages
@@ -70,28 +70,28 @@ type Message struct {
 	Time    time.Duration
 }
 
-type endpoints struct {
-	push  string
-	query string
-	ready string
+type Endpoints struct {
+	Push  string
+	Query string
+	Ready string
 }
 
 //IsReady checks if the loki is ready
 func (client *LokiConnector) IsReady() bool {
-	response, err := http.Get(client.url + client.endpoints.ready)
+	response, err := http.Get(client.Url + client.Endpoints.Ready)
 	return err == nil && response.StatusCode == 200
 }
 
 //ConnectLoki creates a new loki connector
 func ConnectLoki(cfg config.Config, logger *logging.Logger) (*LokiConnector, error) {
 	client := LokiConnector{
-		quit:    make(chan struct{}),
-		streams: make(chan *LokiStream),
-		logger:  logger,
-		endpoints: endpoints{
-			push:  "/loki/api/v1/push",
-			query: "/loki/api/v1/query_range",
-			ready: "/ready",
+		Quit:    make(chan struct{}),
+		Streams: make(chan *LokiStream),
+		Logger:  logger,
+		Endpoints: Endpoints{
+			Push:  "/loki/api/v1/push",
+			Query: "/loki/api/v1/query_range",
+			Ready: "/ready",
 		},
 	}
 
@@ -106,7 +106,7 @@ func ConnectLoki(cfg config.Config, logger *logging.Logger) (*LokiConnector, err
 		return &client, fmt.Errorf("Unknown Config type")
 	}
 	if err == nil && addr != nil {
-		client.url = addr.GetString()
+		client.Url = addr.GetString()
 	} else {
 		return nil, fmt.Errorf("Failed to get connection URL from configuration file")
 	}
@@ -119,7 +119,7 @@ func ConnectLoki(cfg config.Config, logger *logging.Logger) (*LokiConnector, err
 		batchSize, err = conf.GetOption("Loki.Connection.BatchSize")
 	}
 	if err == nil && batchSize != nil {
-		client.maxBatch = batchSize.GetInt()
+		client.MaxBatch = batchSize.GetInt()
 	} else {
 		return nil, fmt.Errorf("Failed to get connection max batch size from configuration file")
 	}
@@ -132,7 +132,7 @@ func ConnectLoki(cfg config.Config, logger *logging.Logger) (*LokiConnector, err
 		waitTime, err = conf.GetOption("Loki.Connection.MaxWaitTime")
 	}
 	if err == nil && waitTime != nil {
-		client.maxWaitTime = time.Duration(waitTime.GetInt()) * time.Millisecond
+		client.MaxWaitTime = time.Duration(waitTime.GetInt()) * time.Millisecond
 	} else {
 		return nil, fmt.Errorf("Failed to get connection max wait time from configuration file")
 	}
@@ -144,7 +144,7 @@ func ConnectLoki(cfg config.Config, logger *logging.Logger) (*LokiConnector, err
 //Connect just checks the Loki availability
 func (client *LokiConnector) Connect() error {
 	if !client.IsReady() {
-		return fmt.Errorf("The server on the following url is not ready: %s", client.url)
+		return fmt.Errorf("The server on the following url is not ready: %s", client.Url)
 	} else {
 		return nil
 	}
@@ -153,26 +153,26 @@ func (client *LokiConnector) Connect() error {
 //Disconnect waits for the last batch to be sent to loki
 // and ends the sending goroutine created by Start()
 func (client *LokiConnector) Disconnect() {
-	close(client.quit)
-	client.wait.Wait()
+	close(client.Quit)
+	client.Wait.Wait()
 }
 
 //Start a goroutine, which sends data to loki if the current batch > maxBatch or if more time
 //than maxWaitTime passed
 func (client *LokiConnector) Start(outchan chan interface{}, inchan chan interface{}) {
-	client.wait.Add(1)
+	client.Wait.Add(1)
 	go func() {
-		client.timer = time.NewTimer(client.maxWaitTime)
+		client.Timer = time.NewTimer(client.MaxWaitTime)
 
 		defer func() {
-			if client.batchCounter > 0 {
+			if client.BatchCounter > 0 {
 				client.send()
 			}
-			client.wait.Done()
+			client.Wait.Done()
 		}()
 		for {
 			select {
-			case <-client.quit:
+			case <-client.Quit:
 				return
 			case logs := <-inchan:
 				switch message := logs.(type) {
@@ -186,20 +186,20 @@ func (client *LokiConnector) Start(outchan chan interface{}, inchan chan interfa
 					stream := client.CreateStream(message.Labels, []Message{m})
 					client.addStream(stream)
 				default:
-					client.logger.Metadata(map[string]interface{}{
+					client.Logger.Metadata(map[string]interface{}{
 						"logs": logs,
 					})
-					client.logger.Info("Skipped processing of received log stream of invalid format")
+					client.Logger.Info("Skipped processing of received log stream of invalid format")
 				}
-			case <-client.timer.C:
-				if client.batchCounter > 0 {
-					client.logger.Metadata(map[string]interface{}{
-						"logStreams": client.currentMessage.Streams,
+			case <-client.Timer.C:
+				if client.BatchCounter > 0 {
+					client.Logger.Metadata(map[string]interface{}{
+						"logStreams": client.CurrentMessage.Streams,
 					})
-					client.logger.Debug("Sending logs, cause: time == maxWaitTime")
+					client.Logger.Debug("Sending logs, cause: time == maxWaitTime")
 					client.send()
 				} else {
-					client.timer.Reset(client.maxWaitTime)
+					client.Timer.Reset(client.MaxWaitTime)
 				}
 			}
 		}
@@ -207,13 +207,13 @@ func (client *LokiConnector) Start(outchan chan interface{}, inchan chan interfa
 }
 
 func (client *LokiConnector) addStream(stream LokiStream) {
-	client.currentMessage.Streams = append(client.currentMessage.Streams, stream)
-	client.batchCounter++
-	if client.batchCounter == client.maxBatch {
-		client.logger.Metadata(map[string]interface{}{
-			"logStreams": client.currentMessage.Streams,
+	client.CurrentMessage.Streams = append(client.CurrentMessage.Streams, stream)
+	client.BatchCounter++
+	if client.BatchCounter == client.MaxBatch {
+		client.Logger.Metadata(map[string]interface{}{
+			"logStreams": client.CurrentMessage.Streams,
 		})
-		client.logger.Debug("Sending logs, cause: batchCounter == maxBatch")
+		client.Logger.Debug("Sending logs, cause: batchCounter == maxBatch")
 		client.send()
 	}
 }
@@ -237,35 +237,35 @@ func (client *LokiConnector) CreateStream(labels map[string]string, messages []M
 
 // Encodes the messages and sends them to loki
 func (client *LokiConnector) send() (*http.Response, error) {
-	str, err := json.Marshal(client.currentMessage)
+	str, err := json.Marshal(client.CurrentMessage)
 	if err != nil {
 		return nil, err
 	}
 
-	response, err := http.Post(client.url+client.endpoints.push, "application/json", bytes.NewReader(str))
+	response, err := http.Post(client.Url+client.Endpoints.Push, "application/json", bytes.NewReader(str))
 
-	client.batchCounter = 0
-	client.currentMessage.Streams = []LokiStream{}
-	client.timer.Reset(client.maxWaitTime)
+	client.BatchCounter = 0
+	client.CurrentMessage.Streams = []LokiStream{}
+	client.Timer.Reset(client.MaxWaitTime)
 
 	if err != nil {
-		client.logger.Metadata(map[string]interface{}{
+		client.Logger.Metadata(map[string]interface{}{
 			"error": err,
 		})
-		client.logger.Error("An error occured when trying to send logs")
+		client.Logger.Error("An error occured when trying to send logs")
 		return nil, err
 	} else if response.StatusCode != 204 {
-		client.logger.Metadata(map[string]interface{}{
+		client.Logger.Metadata(map[string]interface{}{
 			"error":    err,
 			"response": response,
 		})
-		client.logger.Error("Recieved unexpected statuscode when trying to send logs")
+		client.Logger.Error("Recieved unexpected statuscode when trying to send logs")
 		return nil, fmt.Errorf("Got %d http status code after pushing to loki instead of expected 204", response.StatusCode)
 	} else {
-		client.logger.Metadata(map[string]interface{}{
+		client.Logger.Metadata(map[string]interface{}{
 			"response": response,
 		})
-		client.logger.Debug("Logs successfuly sent")
+		client.Logger.Debug("Logs successfuly sent")
 		return response, nil
 	}
 }
@@ -295,22 +295,22 @@ func (client *LokiConnector) Query(queryString string, startTime time.Duration, 
 	params.Add("query", queryString)
 	params.Add("start", strconv.FormatInt(startTime.Nanoseconds(), 10))
 	params.Add("limit", strconv.Itoa(limit))
-	url := client.url + client.endpoints.query + "?" + params.Encode()
+	url := client.Url + client.Endpoints.Query + "?" + params.Encode()
 
-	client.logger.Metadata(map[string]interface{}{
+	client.Logger.Metadata(map[string]interface{}{
 		"url": url,
 	})
-	client.logger.Debug("Sending query to Loki")
+	client.Logger.Debug("Sending query to Loki")
 
 	response, err := http.Get(url)
 	if err != nil {
 		return []Message{}, err
 	}
 
-	client.logger.Metadata(map[string]interface{}{
+	client.Logger.Metadata(map[string]interface{}{
 		"response": response,
 	})
-	client.logger.Debug("Recieved answer from loki")
+	client.Logger.Debug("Recieved answer from loki")
 
 	body, err := ioutil.ReadAll(response.Body)
 	if err != nil {
