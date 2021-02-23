@@ -12,8 +12,8 @@ import (
 const maxBufferSize = 4096
 
 type socketInfo struct {
-	Address  net.UnixAddr
-	Pc       *net.UnixConn
+	Address net.UnixAddr
+	Pc      *net.UnixConn
 }
 
 type UnixSocketConnector struct {
@@ -27,18 +27,50 @@ type UnixSocketConnector struct {
 // and expects the file to already be created for the outgoing
 // socket. Both or only one of the directions can be configured.
 
-func ConnectUnixSocket(cfg config.Config, logger *logging.Logger) (*UnixSocketConnector, error) {
-	connector := UnixSocketConnector {
+//CreateUnixSocketConnector ...
+func CreateUnixSocketConnector(logger *logging.Logger, inAddress string, outAddress string, maxBufferSize uint64) (*UnixSocketConnector, error) {
+	connector := UnixSocketConnector{
 		msgBuffer: make([]byte, maxBufferSize),
 		logger:    logger,
 		out:       &socketInfo{},
 		in:        &socketInfo{},
 	}
 
-	var err error
-	var address string
+	if inAddress != "" {
+		connector.in.Address.Name = inAddress
+		connector.in.Address.Net = "unixgram"
+		connector.logger.Metadata(map[string]interface{}{
+			"address": connector.in.Address.Name,
+		})
+		connector.logger.Debug("In socket configured")
+	} else {
+		connector.in = nil
+		connector.logger.Debug("The in socket isn't configured")
+	}
 
-	var inAddr  *config.Option
+	if outAddress != "" {
+		connector.out.Address.Name = outAddress
+		connector.out.Address.Net = "unixgram"
+
+		connector.logger.Metadata(map[string]interface{}{
+			"address": connector.out.Address.Name,
+		})
+		connector.logger.Debug("Out socket configured")
+	} else {
+		connector.out = nil
+		connector.logger.Debug("The out socket isn't configured")
+	}
+
+	err := connector.Connect()
+	return &connector, err
+}
+
+//ConnectUnixSocket ...
+func ConnectUnixSocket(cfg config.Config, logger *logging.Logger) (*UnixSocketConnector, error) {
+	var err error
+	var inAddress, outAddress string
+
+	var inAddr *config.Option
 	switch conf := cfg.(type) {
 	case *config.INIConfig:
 		inAddr, err = conf.GetOption("socket/in_address")
@@ -47,22 +79,9 @@ func ConnectUnixSocket(cfg config.Config, logger *logging.Logger) (*UnixSocketCo
 	}
 
 	if err == nil && inAddr != nil {
-		address = inAddr.GetString()
+		inAddress = inAddr.GetString()
 	} else {
-		address = ""
-	}
-	if address != "" {
-		connector.in.Address.Name = address
-		connector.in.Address.Net = "unixgram"
-
-		connector.logger.Metadata(map[string]interface{}{
-			"address": connector.in.Address.Name,
-		})
-		connector.logger.Debug("In socket configured")
-	} else {
-		connector.in = nil
-
-		connector.logger.Debug("The in socket isn't configured")
+		inAddress = ""
 	}
 
 	var outAddr *config.Option
@@ -74,33 +93,16 @@ func ConnectUnixSocket(cfg config.Config, logger *logging.Logger) (*UnixSocketCo
 	}
 
 	if err == nil && inAddr != nil {
-		address = outAddr.GetString()
+		outAddress = outAddr.GetString()
 	} else {
-		address = ""
-	}
-	if address != "" {
-		connector.out.Address.Name = address
-		connector.out.Address.Net = "unixgram"
-
-		connector.logger.Metadata(map[string]interface{}{
-			"address": connector.out.Address.Name,
-		})
-		connector.logger.Debug("Out socket configured")
-	} else {
-		connector.out = nil
-
-		connector.logger.Debug("The out socket isn't configured")
+		outAddress = ""
 	}
 
-	if connector.in == nil && connector.out == nil {
+	if outAddress == "" && inAddress == "" {
 		return nil, fmt.Errorf("No socket was configured")
 	}
 
-	err = connector.Connect()
-	if err != nil {
-		return nil, err
-	}
-	return &connector, nil
+	return CreateUnixSocketConnector(logger, inAddress, outAddress, maxBufferSize)
 }
 
 func (connector *UnixSocketConnector) connectSingleSocket(info *socketInfo, isIn bool) error {
@@ -149,7 +151,7 @@ func (connector *UnixSocketConnector) Start(outchan chan interface{}, inchan cha
 				n, err := connector.in.Pc.Read(connector.msgBuffer[:])
 				if err != nil || n < 1 {
 					connector.logger.Metadata(map[string]interface{}{
-						"error": err,
+						"error":           err,
 						"characters read": n,
 					})
 					connector.logger.Debug("Error while trying to read from unix socket.")
@@ -174,7 +176,7 @@ func (connector *UnixSocketConnector) Start(outchan chan interface{}, inchan cha
 					n, err := connector.out.Pc.Write([]byte(message))
 					if err != nil || n < 1 {
 						connector.logger.Metadata(map[string]interface{}{
-							"error": err,
+							"error":              err,
 							"characters written": n,
 						})
 						connector.logger.Debug("Error while trying to write to unix socket.")
