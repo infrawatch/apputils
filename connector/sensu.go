@@ -15,7 +15,9 @@ const (
 	//QueueNameKeepAlives is the name of queue used by Sensu server for receiving keepalive messages
 	QueueNameKeepAlives = "keepalives"
 	//QueueNameResults is the name of queue used by Sensu server for receiving check result messages
-	QueueNameResults = "results"
+	QueueNameResults     = "results"
+	defaultClientAddress = "127.0.0.1"
+	defaultInterval      = 30
 )
 
 //Result contains data about check execution
@@ -69,83 +71,104 @@ type SensuConnector struct {
 	consumer          <-chan amqp.Delivery
 }
 
+//CreateSensuConnector creates the connector and connects on given RabbitMQ service with Sensu server on appropriate channels
+func CreateSensuConnector(logger *logging.Logger, address string, clientName string, clientAddress string, keepaliveInterval int64, subscriptions []string) (*SensuConnector, error) {
+	connector := SensuConnector{
+		Address:           address,
+		Subscription:      subscriptions,
+		ClientName:        clientName,
+		exchangeName:      fmt.Sprintf("client:%s", clientName),
+		queueName:         fmt.Sprintf("%s-infrawatch-%d", clientName, time.Now().Unix()),
+		ClientAddress:     clientAddress,
+		KeepaliveInterval: keepaliveInterval,
+		logger:            logger,
+	}
+
+	if err := connector.Connect(); err != nil {
+		return &connector, fmt.Errorf("Error while connecting to RabbitMQ")
+	}
+
+	return &connector, nil
+}
+
 //ConnectSensu creates new Sensu connector from the given configuration file
 func ConnectSensu(cfg config.Config, logger *logging.Logger) (*SensuConnector, error) {
-	connector := SensuConnector{}
-	connector.logger = logger
-
 	var err error
-	var addr *config.Option
+	var opt *config.Option
+
 	switch conf := cfg.(type) {
 	case *config.INIConfig:
-		addr, err = conf.GetOption("sensu/connection")
+		opt, err = conf.GetOption("sensu/connection")
 	case *config.JSONConfig:
-		addr, err = conf.GetOption("Sensu.Connection.Address")
+		opt, err = conf.GetOption("Sensu.Connection.Address")
 	default:
-		return &connector, fmt.Errorf("Unknown Config type")
+		return nil, fmt.Errorf("Unknown Config type")
 	}
-	if err == nil && addr != nil {
-		connector.Address = addr.GetString()
-	} else {
-		return &connector, fmt.Errorf("Failed to get connection URL from configuration file")
+	if err != nil {
+		return nil, err
 	}
+	if opt == nil {
+		return nil, fmt.Errorf("Failed to get connection URL from configuration file")
+	}
+	addr := opt.GetString()
 
-	var subs *config.Option
 	switch conf := cfg.(type) {
 	case *config.INIConfig:
-		subs, err = conf.GetOption("sensu/subscriptions")
+		opt, err = conf.GetOption("sensu/subscriptions")
 	case *config.JSONConfig:
-		subs, err = conf.GetOption("Sensu.Connection.Subscriptions")
+		opt, err = conf.GetOption("Sensu.Connection.Subscriptions")
 	}
-	if err == nil && subs != nil {
-		connector.Subscription = subs.GetStrings(",")
-	} else {
-		return &connector, fmt.Errorf("Failed to get subscription channels from configuration file")
+	if err != nil {
+		return nil, err
+	}
+	subs := []string{"all"}
+	if opt != nil {
+		subs = opt.GetStrings(",")
 	}
 
-	var clientName *config.Option
 	switch conf := cfg.(type) {
 	case *config.INIConfig:
-		clientName, err = conf.GetOption("sensu/client_name")
+		opt, err = conf.GetOption("sensu/client_name")
 	case *config.JSONConfig:
-		clientName, err = conf.GetOption("Sensu.Client.Name")
+		opt, err = conf.GetOption("Sensu.Client.Name")
 	}
-	if err == nil && clientName != nil {
-		connector.ClientName = clientName.GetString()
-		connector.exchangeName = fmt.Sprintf("client:%s", clientName)
-		connector.queueName = fmt.Sprintf("%s-infrawatch-%d", clientName, time.Now().Unix())
-	} else {
-		return &connector, fmt.Errorf("Failed to get client name from configuration file")
+	if err != nil {
+		return nil, err
+	}
+	clientName := defaultClientName
+	if opt != nil {
+		clientName = opt.GetString()
 	}
 
-	var clientAddr *config.Option
 	switch conf := cfg.(type) {
 	case *config.INIConfig:
-		clientAddr, err = conf.GetOption("sensu/client_address")
+		opt, err = conf.GetOption("sensu/client_address")
 	case *config.JSONConfig:
-		clientAddr, err = conf.GetOption("Sensu.Client.Address")
+		opt, err = conf.GetOption("Sensu.Client.Address")
 	}
-	if err == nil && clientAddr != nil {
-		connector.ClientAddress = clientAddr.GetString()
-	} else {
-		return &connector, fmt.Errorf("Failed to get client address from configuration file")
+	if err != nil {
+		return nil, err
+	}
+	clientAddr := defaultClientAddress
+	if opt != nil {
+		clientAddr = opt.GetString()
 	}
 
-	var interval *config.Option
 	switch conf := cfg.(type) {
 	case *config.INIConfig:
-		interval, err = conf.GetOption("sensu/keepalive_interval")
+		opt, err = conf.GetOption("sensu/keepalive_interval")
 	case *config.JSONConfig:
-		interval, err = conf.GetOption("Sensu.Connection.KeepaliveInterval")
+		opt, err = conf.GetOption("Sensu.Connection.KeepaliveInterval")
 	}
-	if err == nil && interval != nil {
-		connector.KeepaliveInterval = interval.GetInt()
-	} else {
-		return &connector, fmt.Errorf("Failed to get keepalive interval from configuration file")
+	if err != nil {
+		return nil, err
+	}
+	interval := int64(defaultInterval)
+	if opt != nil {
+		interval = opt.GetInt()
 	}
 
-	err = connector.Connect()
-	return &connector, err
+	return CreateSensuConnector(logger, addr, clientName, clientAddr, interval, subs)
 }
 
 //Connect connects to RabbitMQ server and
