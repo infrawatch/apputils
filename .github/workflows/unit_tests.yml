@@ -1,9 +1,23 @@
-name: Integration testing
+name: Unit test suite run
 env:
+  # sensu container config
   SENSU_IMAGE: bitlayer/docker-sensu:1.9.0-1
+  TRANSPORT_NAME: rabbitmq
+  RABBITMQ_HOST: 127.0.0.1
+  RABBITMQ_USER: guest
+  RABBITMQ_PASSWORD: ""
+  RABBITMQ_VHOST: "/sensu"
+  REDIS_HOST: 127.0.0.1
+  REDIS_PORT: 6379
+  # redis container config
+  REDIS_IMAGE: redis:6.2.1
+  # rabbitmq container config
   RABBITMQ_IMAGE: rabbitmq:3.7.24
+  # qdr container config
   QDROUTERD_IMAGE: quay.io/interconnectedcloud/qdrouterd:1.12.0
+  # loki container config
   LOKI_IMAGE: grafana/loki:2.1.0
+  # misc. config
   COVERALLS_TOKEN: ${{ secrets.COVERALLS_TOKEN }}
 on: push
 
@@ -15,6 +29,9 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
+      - name: Start Redis
+        run: |
+          docker run --name redis -p 6379:6379 -d $REDIS_IMAGE
       - name: Start RabbitMQ message bus
         run: |
           docker run --name=rabbitmq -p 5672:5672 -p 4369:4369 -d $RABBITMQ_IMAGE
@@ -29,18 +46,22 @@ jobs:
           docker exec rabbitmq rabbitmqctl set_permissions -p "/sensu" guest ".*" ".*" ".*"
       - name: Start Sensu
         run: |
-          docker run --name sensu-core --volume=$PWD/ci/sensu/conf.d:/etc/sensu/conf.d:ro --network host -d $SENSU_IMAGE
+          docker run --name sensu-core --network host --env-file=$PWD/ci/sensu-env.sh -d $SENSU_IMAGE server
       - name: Start Loki
         run: |
           docker run --name loki --volume=$PWD/ci/loki-config.yaml:/etc/loki/loki-config.yaml:ro -p 3100:3100 -d $LOKI_IMAGE -config.file=/etc/loki/loki-config.yaml
       - name: List dependency containers
         run: |
           docker ps --all
+          echo "---- rabbitmq ----"
           docker logs rabbitmq
+          echo "---- qdr ----"
           docker logs qdr
+          echo "---- sensu-core ----"
           docker logs sensu-core
+          echo "---- loki ----"
           docker logs loki
-      - name: Run integration tests
+      - name: Run unit tests
         run: |
           export PROJECT_ROOT=/root/go/src/github.com/infrawatch/apputils
           docker run -uroot --network host --volume=$PWD:$PROJECT_ROOT:z --workdir $PROJECT_ROOT centos:8 bash ci/run_ci.sh
