@@ -20,7 +20,7 @@ const (
 	ConfigContent = `{
 	"Amqp1": {
 		"Connection": {
-			"Address": "amqp://127.0.0.1:5672/collectd/telemetry",
+			"Address": "amqp://127.0.0.1:5666",
 		  "SendTimeout": 2
 		},
 		"Client": {
@@ -61,8 +61,9 @@ const (
 }
 `
 )
+
 type MockedSocket struct {
-	Address     string
+	Address string
 }
 
 type MockedConnection struct {
@@ -186,7 +187,7 @@ func TestAMQP10SendAndReceiveMessage(t *testing.T) {
 		t.Fatalf("Failed to parse config file: %s", err)
 	}
 
-	conn, err := connector.NewAMQP10Connector(cfg, logger)
+	conn, err := connector.ConnectAMQP10(cfg, logger)
 	if err != nil {
 		t.Fatalf("Failed to connect to QDR: %s", err)
 	}
@@ -243,7 +244,7 @@ func TestLoki(t *testing.T) {
 	batchSize := int(bs.GetInt())
 	testId := strconv.FormatInt(time.Now().UnixNano(), 16)
 
-	client, err := connector.NewLokiConnector(cfg, logger)
+	client, err := connector.ConnectLoki(cfg, logger)
 	if err != nil {
 		t.Fatalf("Failed to create loki client: %s", err)
 	}
@@ -257,7 +258,7 @@ func TestLoki(t *testing.T) {
 	}()
 
 	t.Run("Test sending whole streams", func(t *testing.T) {
-		c, err := connector.NewLokiConnector(cfg, logger)
+		c, err := connector.ConnectLoki(cfg, logger)
 		if err != nil {
 			t.Fatalf("Failed to create loki client: %s", err)
 		}
@@ -288,24 +289,24 @@ func TestLoki(t *testing.T) {
 				Message: "test message streams2",
 			}
 			messages = []connector.Message{message1, message2}
-			sender <-c.CreateStream(labels, messages)
+			sender <- c.CreateStream(labels, messages)
 		}
 		time.Sleep(10 * time.Millisecond)
 
 		// query it back
 		queryString := "{test=\"streams\",unique=\"" + testId + "\"}"
-		answer, err := c.Query(queryString, 0, batchSize * 5)
+		answer, err := c.Query(queryString, 0, batchSize*5)
 		if err != nil {
 			t.Fatalf("Couldn't query loki after push to test streams: %s", err)
 		}
-		assert.Equal(t, batchSize * 2, len(answer), "Query after streams test returned wrong count of results")
+		assert.Equal(t, batchSize*2, len(answer), "Query after streams test returned wrong count of results")
 		for _, message := range messages {
 			assert.Contains(t, answer, message, "Wrong test message when querying for streams test results")
 		}
 	})
 
 	t.Run("Test sending single logs", func(t *testing.T) {
-		c, err := connector.NewLokiConnector(cfg, logger)
+		c, err := connector.ConnectLoki(cfg, logger)
 		if err != nil {
 			t.Fatalf("Failed to create loki client: %s", err)
 		}
@@ -326,10 +327,10 @@ func TestLoki(t *testing.T) {
 			labels["test"] = "singleLog"
 			labels["unique"] = testId
 			labels["order"] = strconv.FormatInt(int64(i), 10)
-			message := connector.LokiLog {
+			message := connector.LokiLog{
 				LogMessage: "Test message single logs",
-				Timestamp: currentTime,
-				Labels: labels,
+				Timestamp:  currentTime,
+				Labels:     labels,
 			}
 			sender <- message
 		}
@@ -350,7 +351,7 @@ func TestLoki(t *testing.T) {
 
 	// push a whole batch
 	t.Run("Test sending in batches", func(t *testing.T) {
-		c, err := connector.NewLokiConnector(cfg, logger)
+		c, err := connector.ConnectLoki(cfg, logger)
 		if err != nil {
 			t.Fatalf("Failed to create loki client: %s", err)
 		}
@@ -377,7 +378,7 @@ func TestLoki(t *testing.T) {
 				Message: "test message batch",
 			}
 			messages = []connector.Message{message}
-			sender <-c.CreateStream(labels, messages)
+			sender <- c.CreateStream(labels, messages)
 		}
 		time.Sleep(10 * time.Millisecond)
 
@@ -395,7 +396,7 @@ func TestLoki(t *testing.T) {
 
 	// push just one message and wait for the maxWaitTime to pass
 	t.Run("Test waiting for maxWaitTime to pass", func(t *testing.T) {
-		c, err := connector.NewLokiConnector(cfg, logger)
+		c, err := connector.ConnectLoki(cfg, logger)
 		if err != nil {
 			t.Fatalf("Failed to create loki client: %s", err)
 		}
