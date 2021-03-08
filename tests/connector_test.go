@@ -20,7 +20,7 @@ const (
 	ConfigContent = `{
 	"Amqp1": {
 		"Connection": {
-			"Address": "amqp://127.0.0.1:5672/collectd/telemetry",
+			"Address": "amqp://127.0.0.1:5666",
 		  "SendTimeout": 2
 		},
 		"Client": {

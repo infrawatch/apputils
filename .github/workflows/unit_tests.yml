@@ -1,0 +1,46 @@
+name: Integration testing
+env:
+  SENSU_IMAGE: bitlayer/docker-sensu:1.9.0-1
+  RABBITMQ_IMAGE: rabbitmq:3.7.24
+  QDROUTERD_IMAGE: quay.io/interconnectedcloud/qdrouterd:1.12.0
+  LOKI_IMAGE: grafana/loki:2.1.0
+  COVERALLS_TOKEN: ${{ secrets.COVERALLS_TOKEN }}
+on: push
+
+jobs:
+  test-framework:
+    name: Unit test suite
+    runs-on: ubuntu-20.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+      - name: Start RabbitMQ message bus
+        run: |
+          docker run --name=rabbitmq -p 5672:5672 -p 4369:4369 -d $RABBITMQ_IMAGE
+      - name: Start qdrouterd message bus
+        run: |
+          docker run --name=qdr --volume=$PWD/ci/qdrouterd.conf:/etc/qpid-dispatch/qdrouterd.conf:ro -p 5666:5666 -d $QDROUTERD_IMAGE
+      - name: Configure RabbitMQ message bus for sensu-core usage
+        run: |
+          docker exec rabbitmq rabbitmqctl start_app
+          sleep 5
+          docker exec rabbitmq rabbitmqctl add_vhost /sensu
+          docker exec rabbitmq rabbitmqctl set_permissions -p "/sensu" guest ".*" ".*" ".*"
+      - name: Start Sensu
+        run: |
+          docker run --name sensu-core --volume=$PWD/ci/sensu/conf.d:/etc/sensu/conf.d:ro --network host -d $SENSU_IMAGE
+      - name: Start Loki
+        run: |
+          docker run --name loki --volume=$PWD/ci/loki-config.yaml:/etc/loki/loki-config.yaml:ro -p 3100:3100 -d $LOKI_IMAGE -config.file=/etc/loki/loki-config.yaml
+      - name: List dependency containers
+        run: |
+          docker ps --all
+          docker logs rabbitmq
+          docker logs qdr
+          docker logs sensu-core
+          docker logs loki
+      - name: Run integration tests
+        run: |
+          export PROJECT_ROOT=/root/go/src/github.com/infrawatch/apputils
+          docker run -uroot --network host --volume=$PWD:$PROJECT_ROOT:z --workdir $PROJECT_ROOT centos:8 bash ci/run_ci.sh
