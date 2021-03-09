@@ -46,11 +46,11 @@ jobs:
           docker exec rabbitmq rabbitmqctl set_permissions -p "/sensu" guest ".*" ".*" ".*"
       - name: Start Sensu
         run: |
-          docker run --name sensu-core --network host --env-file=$PWD/ci/sensu-env.sh -d $SENSU_IMAGE server
+          docker run --name sensu-core --network host --env-file=$PWD/ci/sensu-env.sh --volume=$PWD/ci/sensu/check.d:/etc/sensu/check.d:ro --volume=$PWD/ci/sensu/handlers:/etc/sensu/handlers:ro -d $SENSU_IMAGE server
       - name: Start Loki
         run: |
           docker run --name loki --volume=$PWD/ci/loki-config.yaml:/etc/loki/loki-config.yaml:ro -p 3100:3100 -d $LOKI_IMAGE -config.file=/etc/loki/loki-config.yaml
-      - name: List dependency containers
+      - name: List dependency containers' logs
         run: |
           docker ps --all
           echo "---- rabbitmq ----"
@@ -65,3 +65,14 @@ jobs:
         run: |
           export PROJECT_ROOT=/root/go/src/github.com/infrawatch/apputils
           docker run -uroot --network host --volume=$PWD:$PROJECT_ROOT:z --workdir $PROJECT_ROOT centos:8 bash ci/run_ci.sh
+      - name: List dependency containers' logs
+        run: |
+          echo "---- rabbitmq ----"
+          docker logs rabbitmq
+          echo "---- qdr ----"
+          docker logs qdr
+          echo "---- sensu-core ----"
+          docker logs sensu-core
+          echo "---- loki ----"
+          docker logs loki
+        if: ${{ failure() }}
