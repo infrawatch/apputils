@@ -46,7 +46,8 @@ jobs:
           docker exec rabbitmq rabbitmqctl set_permissions -p "/sensu" guest ".*" ".*" ".*"
       - name: Start Sensu
         run: |
-          docker run --name sensu-core --network host --env-file=$PWD/ci/sensu-env.sh --volume=$PWD/ci/sensu/check.d:/etc/sensu/check.d:ro --volume=$PWD/ci/sensu/handlers:/etc/sensu/handlers:ro -d $SENSU_IMAGE server
+          docker run --name sensu-api --network host --env-file=$PWD/ci/sensu-env.sh -d $SENSU_IMAGE api
+          docker run --name sensu-server --network host --env-file=$PWD/ci/sensu-env.sh --volume=$PWD/ci/sensu/check.d:/etc/sensu/check.d:ro -d $SENSU_IMAGE server
       - name: Start Loki
         run: |
           docker run --name loki --volume=$PWD/ci/loki-config.yaml:/etc/loki/loki-config.yaml:ro -p 3100:3100 -d $LOKI_IMAGE -config.file=/etc/loki/loki-config.yaml
@@ -58,7 +59,8 @@ jobs:
           echo "---- qdr ----"
           docker logs qdr
           echo "---- sensu-core ----"
-          docker logs sensu-core
+          docker logs sensu-server
+          docker logs sensu-api
           echo "---- loki ----"
           docker logs loki
       - name: Run unit tests
@@ -72,7 +74,8 @@ jobs:
           echo "---- qdr ----"
           docker logs qdr
           echo "---- sensu-core ----"
-          docker logs sensu-core
+          docker logs sensu-server
+          docker logs sensu-api
           echo "---- loki ----"
           docker logs loki
         if: ${{ failure() }}

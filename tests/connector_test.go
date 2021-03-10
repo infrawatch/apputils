@@ -1,8 +1,10 @@
 package tests
 
 import (
+	"encoding/json"
 	"io/ioutil"
 	"log"
+	"net/http"
 	"os"
 	"path"
 	"strconv"
@@ -465,6 +467,7 @@ func TestSensuCommunication(t *testing.T) {
 				// verify we received awaited check request
 				assert.Equal(t, "echo", reqst.Name)
 				assert.Equal(t, "echo \"wubba lubba\" && exit 1", reqst.Command)
+
 				// mock result and send it
 				result := connector.CheckResult{
 					Client: sensu.ClientName,
@@ -472,6 +475,8 @@ func TestSensuCommunication(t *testing.T) {
 						Command:  reqst.Command,
 						Name:     reqst.Name,
 						Issued:   reqst.Issued,
+						Handlers: reqst.Handlers,
+						Handler:  reqst.Handler,
 						Executed: time.Now().Unix(),
 						Duration: time.Millisecond.Seconds(),
 						Output:   "wubba lubba",
@@ -486,6 +491,25 @@ func TestSensuCommunication(t *testing.T) {
 		// wait for sensu handler to create result receive verification file
 		time.Sleep(time.Second)
 
-		assert.FileExists(t, "/tmp/apputils-sensu-result-received.txt")
+		resp, err := http.Get("http://127.0.0.1:4567/results")
+		assert.NoError(t, err)
+		defer resp.Body.Close()
+
+		body, err := ioutil.ReadAll(resp.Body)
+		assert.NoError(t, err)
+
+		var resultList []connector.CheckResult
+		err = json.Unmarshal(body, &resultList)
+		assert.NoError(t, err)
+		found := false
+		for _, res := range resultList {
+			if res.Client == "ci-unit" {
+				if res.Result.Name == "echo" && res.Result.Command == "echo \"wubba lubba\" && exit 1" {
+					found = true
+					break
+				}
+			}
+		}
+		assert.True(t, found)
 	})
 }
