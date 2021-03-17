@@ -1,8 +1,10 @@
 package tests
 
 import (
+	"encoding/json"
 	"io/ioutil"
 	"log"
+	"net/http"
 	"os"
 	"path"
 	"strconv"
@@ -433,5 +435,81 @@ func TestLoki(t *testing.T) {
 		for _, message := range answer {
 			assert.Equal(t, messages[0], message, "Wrong test message when querying for maxWaitTime test results")
 		}
+	})
+}
+
+func TestSensuCommunication(t *testing.T) {
+	tmpdir, err := ioutil.TempDir(".", "connector_test_tmp")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer os.RemoveAll(tmpdir)
+	logpath := path.Join(tmpdir, "test.log")
+	logger, err := logging.NewLogger(logging.DEBUG, logpath)
+	if err != nil {
+		t.Fatalf("Failed to open log file %s. %s\n", logpath, err)
+	}
+	defer logger.Destroy()
+
+	// check for "ci" subscribers is defined in ci/sensu/check.d/test.json
+	sensu, err := connector.CreateSensuConnector(logger, "amqp://127.0.0.1:5672//sensu", "ci-unit", "127.0.0.1", 1, []string{"ci"})
+	assert.NoError(t, err)
+
+	t.Run("Test communication with sensu-core server", func(t *testing.T) {
+		requests := make(chan interface{})
+		results := make(chan interface{})
+		sensu.Start(requests, results)
+
+		// wait for request from sensu-core server
+		for req := range requests {
+			switch reqst := req.(type) {
+			case connector.CheckRequest:
+				// verify we received awaited check request
+				assert.Equal(t, "echo", reqst.Name)
+				assert.Equal(t, "echo \"wubba lubba\" && exit 1", reqst.Command)
+
+				// mock result and send it
+				result := connector.CheckResult{
+					Client: sensu.ClientName,
+					Result: connector.Result{
+						Command:  reqst.Command,
+						Name:     reqst.Name,
+						Issued:   reqst.Issued,
+						Handlers: reqst.Handlers,
+						Handler:  reqst.Handler,
+						Executed: time.Now().Unix(),
+						Duration: time.Millisecond.Seconds(),
+						Output:   "wubba lubba",
+						Status:   1,
+					},
+				}
+				results <- result
+				goto done
+			}
+		}
+	done:
+		// wait for sensu handler to create result receive verification file
+		time.Sleep(time.Second)
+
+		resp, err := http.Get("http://127.0.0.1:4567/results")
+		assert.NoError(t, err)
+		defer resp.Body.Close()
+
+		body, err := ioutil.ReadAll(resp.Body)
+		assert.NoError(t, err)
+
+		var resultList []connector.CheckResult
+		err = json.Unmarshal(body, &resultList)
+		assert.NoError(t, err)
+		found := false
+		for _, res := range resultList {
+			if res.Client == "ci-unit" {
+				if res.Result.Name == "echo" && res.Result.Command == "echo \"wubba lubba\" && exit 1" {
+					found = true
+					break
+				}
+			}
+		}
+		assert.True(t, found)
 	})
 }

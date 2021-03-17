@@ -1,0 +1,14 @@
+{
+  "checks": {
+    "echo": {
+      "command": "echo \"wubba lubba\" && exit 1",
+      "interval": 1,
+      "subscribers": [
+        "ci"
+      ],
+      "handlers": [
+        "handle-ci"
+      ]
+    }
+  }
+}

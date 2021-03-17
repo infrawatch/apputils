@@ -1,0 +1,8 @@
+{
+  "handlers": {
+    "handle-ci": {
+      "type": "pipe",
+      "command": "cat >/tmp/apputils-sensu-result-received.txt"
+    }
+  }
+}

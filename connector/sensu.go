@@ -22,13 +22,15 @@ const (
 
 //Result contains data about check execution
 type Result struct {
-	Command  string  `json:"command"`
-	Name     string  `json:"name"`
-	Issued   int64   `json:"issued"`
-	Executed int64   `json:"executed"`
-	Duration float64 `json:"duration"`
-	Output   string  `json:"output"`
-	Status   int     `json:"status"`
+	Command  string   `json:"command"`
+	Name     string   `json:"name"`
+	Issued   int64    `json:"issued"`
+	Handlers []string `json:"handlers,omitempty"`
+	Handler  string   `json:"handler,omitempty"`
+	Executed int64    `json:"executed"`
+	Duration float64  `json:"duration"`
+	Output   string   `json:"output"`
+	Status   int      `json:"status"`
 }
 
 //CheckResult represents message structure for sending check results back to Sensu server
@@ -39,9 +41,11 @@ type CheckResult struct {
 
 //CheckRequest is the output of the connector's listening loop
 type CheckRequest struct {
-	Command string `json:"command"`
-	Name    string `json:"name"`
-	Issued  int64  `json:"issued"`
+	Command  string   `json:"command"`
+	Name     string   `json:"name"`
+	Issued   int64    `json:"issued"`
+	Handlers []string `json:"handlers,omitempty"`
+	Handler  string   `json:"handler,omitempty"`
 }
 
 //Keepalive holds structure for Sensu KeepAlive messages
