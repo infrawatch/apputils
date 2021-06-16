@@ -1,4 +1,4 @@
-package connector
+package unixSocket
 
 import (
 	"fmt"

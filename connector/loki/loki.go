@@ -1,4 +1,4 @@
-package connector
+package loki
 
 import (
 	"bytes"

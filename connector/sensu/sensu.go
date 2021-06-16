@@ -1,4 +1,4 @@
-package connector
+package sensu
 
 import (
 	"encoding/json"
@@ -18,6 +18,7 @@ const (
 	QueueNameResults     = "results"
 	defaultClientAddress = "127.0.0.1"
 	defaultInterval      = 30
+	defaultClientName     = "localhost"
 )
 
 //Result contains data about check execution
