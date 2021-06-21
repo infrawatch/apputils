@@ -12,7 +12,10 @@ import (
 	"time"
 
 	"github.com/infrawatch/apputils/config"
-	"github.com/infrawatch/apputils/connector"
+	"github.com/infrawatch/apputils/connector/amqp10"
+	"github.com/infrawatch/apputils/connector/loki"
+	sensuPackage "github.com/infrawatch/apputils/connector/sensu"
+	"github.com/infrawatch/apputils/connector/unixSocket"
 	"github.com/infrawatch/apputils/logging"
 	"github.com/stretchr/testify/assert"
 )
@@ -109,7 +112,7 @@ func TestUnixSocketSendAndReceiveMessage(t *testing.T) {
 		t.Fatalf("Failed to parse config file: %s", err)
 	}
 
-	socket, err := connector.ConnectUnixSocket(cfg, logger)
+	socket, err := unixSocket.ConnectUnixSocket(cfg, logger)
 	if err != nil {
 		t.Fatalf("Failed to create the socket connector: %s", err)
 	}
@@ -124,7 +127,7 @@ func TestUnixSocketSendAndReceiveMessage(t *testing.T) {
 		t.Fatalf("Failed to parse config file: %s", err)
 	}
 
-	socketIn, err := connector.ConnectUnixSocket(cfg, logger)
+	socketIn, err := unixSocket.ConnectUnixSocket(cfg, logger)
 	if err != nil {
 		t.Fatalf("Failed to create the socket connector: %s", err)
 	}
@@ -139,7 +142,7 @@ func TestUnixSocketSendAndReceiveMessage(t *testing.T) {
 		t.Fatalf("Failed to parse config file: %s", err)
 	}
 
-	socketOut, err := connector.ConnectUnixSocket(cfg, logger)
+	socketOut, err := unixSocket.ConnectUnixSocket(cfg, logger)
 	if err != nil {
 		t.Fatalf("Failed to create the socket connector: %s", err)
 	}
@@ -189,7 +192,7 @@ func TestAMQP10SendAndReceiveMessage(t *testing.T) {
 		t.Fatalf("Failed to parse config file: %s", err)
 	}
 
-	conn, err := connector.ConnectAMQP10(cfg, logger)
+	conn, err := amqp10.ConnectAMQP10(cfg, logger)
 	if err != nil {
 		t.Fatalf("Failed to connect to QDR: %s", err)
 	}
@@ -206,11 +209,11 @@ func TestAMQP10SendAndReceiveMessage(t *testing.T) {
 	t.Run("Test receive", func(t *testing.T) {
 		t.Parallel()
 		data := <-receiver
-		assert.Equal(t, QDRMsg, (data.(connector.AMQP10Message)).Body)
+		assert.Equal(t, QDRMsg, (data.(amqp10.AMQP10Message)).Body)
 	})
 	t.Run("Test send and ACK", func(t *testing.T) {
 		t.Parallel()
-		sender <- connector.AMQP10Message{Address: "qdrtest", Body: QDRMsg}
+		sender <- amqp10.AMQP10Message{Address: "qdrtest", Body: QDRMsg}
 	})
 }
 
@@ -246,7 +249,7 @@ func TestLoki(t *testing.T) {
 	batchSize := int(bs.GetInt())
 	testId := strconv.FormatInt(time.Now().UnixNano(), 16)
 
-	client, err := connector.ConnectLoki(cfg, logger)
+	client, err := loki.ConnectLoki(cfg, logger)
 	if err != nil {
 		t.Fatalf("Failed to create loki client: %s", err)
 	}
@@ -260,7 +263,7 @@ func TestLoki(t *testing.T) {
 	}()
 
 	t.Run("Test sending whole streams", func(t *testing.T) {
-		c, err := connector.ConnectLoki(cfg, logger)
+		c, err := loki.ConnectLoki(cfg, logger)
 		if err != nil {
 			t.Fatalf("Failed to create loki client: %s", err)
 		}
@@ -276,21 +279,21 @@ func TestLoki(t *testing.T) {
 		}()
 
 		currentTime := time.Duration(time.Now().UnixNano())
-		var messages []connector.Message
+		var messages []loki.Message
 		for i := 0; i < batchSize; i++ {
 			labels := make(map[string]string)
 			labels["test"] = "streams"
 			labels["unique"] = testId
 			labels["order"] = strconv.FormatInt(int64(i), 10)
-			message1 := connector.Message{
+			message1 := loki.Message{
 				Time:    currentTime,
 				Message: "test message streams1",
 			}
-			message2 := connector.Message{
+			message2 := loki.Message{
 				Time:    currentTime,
 				Message: "test message streams2",
 			}
-			messages = []connector.Message{message1, message2}
+			messages = []loki.Message{message1, message2}
 			sender <- c.CreateStream(labels, messages)
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -308,7 +311,7 @@ func TestLoki(t *testing.T) {
 	})
 
 	t.Run("Test sending single logs", func(t *testing.T) {
-		c, err := connector.ConnectLoki(cfg, logger)
+		c, err := loki.ConnectLoki(cfg, logger)
 		if err != nil {
 			t.Fatalf("Failed to create loki client: %s", err)
 		}
@@ -329,7 +332,7 @@ func TestLoki(t *testing.T) {
 			labels["test"] = "singleLog"
 			labels["unique"] = testId
 			labels["order"] = strconv.FormatInt(int64(i), 10)
-			message := connector.LokiLog{
+			message := loki.LokiLog{
 				LogMessage: "Test message single logs",
 				Timestamp:  currentTime,
 				Labels:     labels,
@@ -353,7 +356,7 @@ func TestLoki(t *testing.T) {
 
 	// push a whole batch
 	t.Run("Test sending in batches", func(t *testing.T) {
-		c, err := connector.ConnectLoki(cfg, logger)
+		c, err := loki.ConnectLoki(cfg, logger)
 		if err != nil {
 			t.Fatalf("Failed to create loki client: %s", err)
 		}
@@ -369,17 +372,17 @@ func TestLoki(t *testing.T) {
 		}()
 
 		currentTime := time.Duration(time.Now().UnixNano())
-		var messages []connector.Message
+		var messages []loki.Message
 		for i := 0; i < batchSize; i++ {
 			labels := make(map[string]string)
 			labels["test"] = "batch"
 			labels["unique"] = testId
 			labels["order"] = strconv.FormatInt(int64(i), 10)
-			message := connector.Message{
+			message := loki.Message{
 				Time:    currentTime,
 				Message: "test message batch",
 			}
-			messages = []connector.Message{message}
+			messages = []loki.Message{message}
 			sender <- c.CreateStream(labels, messages)
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -398,7 +401,7 @@ func TestLoki(t *testing.T) {
 
 	// push just one message and wait for the maxWaitTime to pass
 	t.Run("Test waiting for maxWaitTime to pass", func(t *testing.T) {
-		c, err := connector.ConnectLoki(cfg, logger)
+		c, err := loki.ConnectLoki(cfg, logger)
 		if err != nil {
 			t.Fatalf("Failed to create loki client: %s", err)
 		}
@@ -417,11 +420,11 @@ func TestLoki(t *testing.T) {
 		labels["test"] = "single"
 		labels["unique"] = testId
 		currentTime := time.Duration(time.Now().UnixNano())
-		message := connector.Message{
+		message := loki.Message{
 			Time:    currentTime,
 			Message: "test message single",
 		}
-		messages := []connector.Message{message}
+		messages := []loki.Message{message}
 		sender <- c.CreateStream(labels, messages)
 		time.Sleep(80 * time.Millisecond)
 
@@ -452,7 +455,7 @@ func TestSensuCommunication(t *testing.T) {
 	defer logger.Destroy()
 
 	// check for "ci" subscribers is defined in ci/sensu/check.d/test.json
-	sensu, err := connector.CreateSensuConnector(logger, "amqp://127.0.0.1:5672//sensu", "ci-unit", "127.0.0.1", 1, []string{"ci"})
+	sensu, err := sensuPackage.CreateSensuConnector(logger, "amqp://127.0.0.1:5672//sensu", "ci-unit", "127.0.0.1", 1, []string{"ci"})
 	assert.NoError(t, err)
 
 	t.Run("Test communication with sensu-core server", func(t *testing.T) {
@@ -463,15 +466,15 @@ func TestSensuCommunication(t *testing.T) {
 		// wait for request from sensu-core server
 		for req := range requests {
 			switch reqst := req.(type) {
-			case connector.CheckRequest:
+			case sensuPackage.CheckRequest:
 				// verify we received awaited check request
 				assert.Equal(t, "echo", reqst.Name)
 				assert.Equal(t, "echo \"wubba lubba\" && exit 1", reqst.Command)
 
 				// mock result and send it
-				result := connector.CheckResult{
+				result := sensuPackage.CheckResult{
 					Client: sensu.ClientName,
-					Result: connector.Result{
+					Result: sensuPackage.Result{
 						Command:  reqst.Command,
 						Name:     reqst.Name,
 						Issued:   reqst.Issued,
@@ -498,7 +501,7 @@ func TestSensuCommunication(t *testing.T) {
 		body, err := ioutil.ReadAll(resp.Body)
 		assert.NoError(t, err)
 
-		var resultList []connector.CheckResult
+		var resultList []sensuPackage.CheckResult
 		err = json.Unmarshal(body, &resultList)
 		assert.NoError(t, err)
 		found := false

@@ -1,4 +1,4 @@
-package connector
+package amqp10
 
 import (
 	"fmt"
