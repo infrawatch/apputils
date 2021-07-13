@@ -23,6 +23,7 @@ import (
 const (
 	QDRMsg        = "{\"message\": \"smart gateway test\"}"
 	ConfigContent = `{
+	"LogLevel": "Debug",
 	"Amqp1": {
 		"Connection": {
 			"Address": "amqp://127.0.0.1:5666",
@@ -36,7 +37,8 @@ const (
 		"Connection": {
 			"Address": "http://localhost:3100",
 			"BatchSize": 4,
-			"MaxWaitTime": 50
+			"MaxWaitTime": 50,
+			"TenantID": "tenant1"
 		}
 	},
 	"Socket": {
@@ -84,6 +86,7 @@ type MockedLokiConnection struct {
 	Address     string
 	BatchSize   int
 	MaxWaitTime int
+	TenantID    string
 }
 
 func TestUnixSocketSendAndReceiveMessage(t *testing.T) {
