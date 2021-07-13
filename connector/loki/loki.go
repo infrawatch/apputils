@@ -97,12 +97,12 @@ func CreateLokiConnector(logger *logging.Logger,
 		quit:        make(chan struct{}),
 		streams:     make(chan *LokiStream),
 		logger:      logger,
+		tenantID:    tenantID,
 		endpoints: endpoints{
 			push:  "/loki/api/v1/push",
 			query: "/loki/api/v1/query_range",
 			ready: "/ready",
 		},
-		tenantID: tenantID,
 	}
 	err := client.Connect()
 	return &client, err
@@ -285,7 +285,7 @@ func (client *LokiConnector) send() (*http.Response, error) {
 	}
 	request.Header.Add("X-Scope-OrgID", client.tenantID)
 	request.Header.Add("Content-Type", "application/json")
-	var c http.Client
+	c := http.Client{}
 	response, err := c.Do(request)
 
 	client.batchCounter = 0
@@ -357,7 +357,7 @@ func (client *LokiConnector) Query(queryString string, startTime time.Duration, 
 		return nil, err
 	}
 	request.Header.Add("X-Scope-OrgID", client.tenantID)
-	var c http.Client
+	c := http.Client{}
 	response, err := c.Do(request)
 	if err != nil {
 		return []Message{}, err
