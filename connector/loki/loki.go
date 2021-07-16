@@ -62,6 +62,7 @@ type LokiConnector struct {
 	batchCounter   int64
 	timer          *time.Timer
 	logger         *logging.Logger
+	tenantID       string
 }
 
 //Message hold structure for Loki API messages
@@ -82,7 +83,13 @@ func (client *LokiConnector) IsReady() bool {
 	return err == nil && response.StatusCode == 200
 }
 
-func CreateLokiConnector(logger *logging.Logger, address string, maxWaitTime time.Duration, batchSize int64) (*LokiConnector, error) {
+//CreateLokiConnector creates a loki connector
+func CreateLokiConnector(logger *logging.Logger,
+	address string,
+	maxWaitTime time.Duration,
+	batchSize int64,
+	tenantID string) (*LokiConnector, error) {
+
 	client := LokiConnector{
 		url:         address,
 		maxBatch:    batchSize,
@@ -90,7 +97,8 @@ func CreateLokiConnector(logger *logging.Logger, address string, maxWaitTime tim
 		quit:        make(chan struct{}),
 		streams:     make(chan *LokiStream),
 		logger:      logger,
-		endpoints:   endpoints{
+		tenantID:    tenantID,
+		endpoints: endpoints{
 			push:  "/loki/api/v1/push",
 			query: "/loki/api/v1/query_range",
 			ready: "/ready",
@@ -106,6 +114,7 @@ func ConnectLoki(cfg config.Config, logger *logging.Logger) (*LokiConnector, err
 	var url string
 	var maxBatch int64
 	var maxWaitTime time.Duration
+	var tenantID string
 
 	var addr *config.Option
 	switch conf := cfg.(type) {
@@ -148,7 +157,21 @@ func ConnectLoki(cfg config.Config, logger *logging.Logger) (*LokiConnector, err
 		return nil, fmt.Errorf("Failed to get connection max wait time from configuration file")
 	}
 
-	return CreateLokiConnector(logger, url, maxWaitTime, maxBatch)
+	var id *config.Option
+	switch conf := cfg.(type) {
+	case *config.INIConfig:
+		id, err = conf.GetOption("loki/tenant_id")
+	case *config.JSONConfig:
+		id, err = conf.GetOption("Loki.Connection.TenantID")
+	}
+	if err == nil && id != nil {
+		tenantID = id.GetString()
+	} else {
+		// "fake" is the default Loki tenant id
+		tenantID = "fake"
+	}
+
+	return CreateLokiConnector(logger, url, maxWaitTime, maxBatch, tenantID)
 }
 
 //Connect just checks the Loki availability
@@ -252,7 +275,18 @@ func (client *LokiConnector) send() (*http.Response, error) {
 		return nil, err
 	}
 
-	response, err := http.Post(client.url+client.endpoints.push, "application/json", bytes.NewReader(str))
+	request, err := http.NewRequest("POST", client.url+client.endpoints.push, bytes.NewReader(str))
+	if err != nil {
+		client.logger.Metadata(map[string]interface{}{
+			"error": err,
+		})
+		client.logger.Error("An error occured when trying to construct a request to send logs")
+		return nil, err
+	}
+	request.Header.Add("X-Scope-OrgID", client.tenantID)
+	request.Header.Add("Content-Type", "application/json")
+	c := http.Client{}
+	response, err := c.Do(request)
 
 	client.batchCounter = 0
 	client.currentMessage.Streams = []LokiStream{}
@@ -264,7 +298,9 @@ func (client *LokiConnector) send() (*http.Response, error) {
 		})
 		client.logger.Error("An error occured when trying to send logs")
 		return nil, err
-	} else if response.StatusCode != 204 {
+	}
+	defer response.Body.Close()
+	if response.StatusCode != 204 {
 		client.logger.Metadata(map[string]interface{}{
 			"error":    err,
 			"response": response,
@@ -312,10 +348,21 @@ func (client *LokiConnector) Query(queryString string, startTime time.Duration, 
 	})
 	client.logger.Debug("Sending query to Loki")
 
-	response, err := http.Get(url)
+	request, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		client.logger.Metadata(map[string]interface{}{
+			"error": err,
+		})
+		client.logger.Error("An error occured when trying to construct a request to query logs")
+		return nil, err
+	}
+	request.Header.Add("X-Scope-OrgID", client.tenantID)
+	c := http.Client{}
+	response, err := c.Do(request)
 	if err != nil {
 		return []Message{}, err
 	}
+	defer response.Body.Close()
 
 	client.logger.Metadata(map[string]interface{}{
 		"response": response,
