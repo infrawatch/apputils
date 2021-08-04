@@ -3,7 +3,6 @@ package tests
 import (
 	"fmt"
 	"io/ioutil"
-	"log"
 	"os"
 	"path"
 	"testing"
@@ -66,7 +65,7 @@ func TestJSONConfigValues(t *testing.T) {
 	// create temporary config file
 	tmpdir, err := ioutil.TempDir(".", "config_test")
 	if err != nil {
-		log.Fatal(err)
+		t.Fatal(err)
 	}
 	defer os.RemoveAll(tmpdir)
 	logpath := path.Join(tmpdir, "test.log")
