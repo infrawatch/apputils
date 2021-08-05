@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -301,9 +303,17 @@ func (client *LokiConnector) send() (*http.Response, error) {
 	}
 	defer response.Body.Close()
 	if response.StatusCode != 204 {
+		buffer := new(strings.Builder)
+		body := ""
+		_, errCopy := io.Copy(buffer, response.Body)
+		if errCopy == nil {
+			body = buffer.String()
+		}
+
 		client.logger.Metadata(map[string]interface{}{
-			"error":    err,
-			"response": response,
+			"error":            err,
+			"response headers": response,
+			"response body":    body,
 		})
 		client.logger.Error("Recieved unexpected statuscode when trying to send logs")
 		return nil, fmt.Errorf("Got %d http status code after pushing to loki instead of expected 204", response.StatusCode)
