@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"fmt"
 	"io/ioutil"
 	"os"
 	"path"
@@ -34,13 +35,13 @@ func TestProcLimits(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpdir)
 
-	// save test content
-	file, err := os.Create(path.Join(tmpdir, "0_limits"))
-	require.NoError(t, err)
-	file.WriteString(procLimitData)
-	require.NoError(t, file.Close())
-
 	t.Run("Test parsed limit file", func(t *testing.T) {
+		// save test content
+		file, err := os.Create(path.Join(tmpdir, "0_limits"))
+		require.NoError(t, err)
+		file.WriteString(procLimitData)
+		require.NoError(t, file.Close())
+
 		system.ProcLimitPathFmt = path.Join(tmpdir, "%d_limits")
 
 		expected := map[string]map[string]interface{}{
@@ -131,4 +132,20 @@ func TestProcLimits(t *testing.T) {
 		assert.Equal(t, expected, parsed, "Did not parse correctly")
 	})
 
+	t.Run("Test opened files from process", func(t *testing.T) {
+		fdir := path.Join(tmpdir, "0")
+		err := os.Mkdir(fdir, 0755)
+		require.NoError(t, err)
+
+		for i := 0; i < 10; i++ {
+			file, err := os.Create(path.Join(fdir, fmt.Sprintf("socket%d", i)))
+			require.NoError(t, err)
+			require.NoError(t, file.Close())
+		}
+
+		system.ProcOpenedFilesFmt = path.Join(tmpdir, "%d")
+		fcount, err := system.GetOpenedFiles(0)
+		require.NoError(t, err)
+		assert.Equal(t, 10, fcount)
+	})
 }

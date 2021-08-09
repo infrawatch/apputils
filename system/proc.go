@@ -11,18 +11,22 @@ import (
 
 // Modifiable constants
 var (
-	ProcLimitColumns = 4
-	ProcLimitPathFmt = "/proc/%d/limits"
-	splitRex         = regexp.MustCompile("  +")
+	ProcLimitColumns   = 4
+	ProcLimitPathFmt   = "/proc/%d/limits"
+	ProcOpenedFilesFmt = "/proc/%d/fd"
+	splitRex           = regexp.MustCompile("  +")
 )
 
-// GetProcLimits returns limits for the given process. Use -1 for actual process.
-func GetProcLimits(PID int) (map[string]map[string]interface{}, error) {
+func getProcPath(pathFmt string, PID int) string {
 	if PID == -1 {
 		PID = os.Getpid()
 	}
+	return fmt.Sprintf(pathFmt, PID)
+}
 
-	data, err := ioutil.ReadFile(fmt.Sprintf(ProcLimitPathFmt, PID))
+// GetProcLimits returns limits for the given process. Use -1 for actual process.
+func GetProcLimits(PID int) (map[string]map[string]interface{}, error) {
+	data, err := ioutil.ReadFile(getProcPath(ProcLimitPathFmt, PID))
 	if err != nil {
 		return nil, err
 	}
@@ -55,4 +59,20 @@ func GetProcLimits(PID int) (map[string]map[string]interface{}, error) {
 	}
 
 	return out, nil
+}
+
+// GetOpenedFiles returns count of opened files by the given process. Use -1 for actual process.
+func GetOpenedFiles(PID int) (int, error) {
+	dir, err := os.Open(getProcPath(ProcOpenedFilesFmt, PID))
+	if err != nil {
+		return -1, err
+	}
+
+	files, err := dir.Readdir(-1)
+	dir.Close()
+	if err != nil {
+		return -1, err
+	}
+
+	return len(files), nil
 }
