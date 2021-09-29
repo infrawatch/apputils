@@ -4,16 +4,11 @@ import (
 	"context"
 	"fmt"
 	"reflect"
-	"regexp"
-	"strconv"
 	"sync"
 	"time"
 
 	"github.com/infrawatch/apputils/logging"
-)
-
-var (
-	intervalRegex = regexp.MustCompile(`(\d*)([smhd])`)
+	"github.com/infrawatch/apputils/misc"
 )
 
 type taskState int
@@ -85,34 +80,18 @@ func (sched *Scheduler) RegisterTask(name string, interval string, timeout int, 
 		return fmt.Errorf("task with given name already exists: %s", name)
 	}
 
-	if match := intervalRegex.FindStringSubmatch(interval); match != nil {
-		var units time.Duration
-		switch match[2] {
-		case "s":
-			units = time.Second
-		case "m":
-			units = time.Minute
-		case "h":
-			units = time.Hour
-		case "d":
-			units = time.Hour * 24
-		default:
-			return fmt.Errorf("invalid interval units (%s) for task %s", match[2], name)
-		}
-		num, err := strconv.Atoi(match[1])
-		if err != nil {
-			return fmt.Errorf("invalid interval value (%s) for task %s: %s", match[3], name, err)
-		}
+	if duration, err := misc.IntervalToDuration(interval); err == nil {
 		sched.tasks[name] = &task{
-			interval: time.Duration(int64(num) * int64(units)),
+			interval: duration,
 			timeout:  timeout,
 			execute:  execute,
 			ticker:   nil,
 			state:    taskNew,
 		}
 	} else {
-		return fmt.Errorf("invalid interval: %s", interval)
+		return err
 	}
+
 	return nil
 }
 
