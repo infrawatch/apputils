@@ -66,7 +66,7 @@ jobs:
       - name: Run unit tests
         run: |
           export PROJECT_ROOT=/root/go/src/github.com/infrawatch/apputils
-          docker run -uroot --network host --volume=$PWD:$PROJECT_ROOT:z --workdir $PROJECT_ROOT centos:8 bash ci/run_ci.sh
+          docker run -uroot --network host --volume=$PWD:$PROJECT_ROOT:z --workdir $PROJECT_ROOT quay.io/centos/centos:stream8 bash ci/run_ci.sh
       - name: List dependency containers' logs
         run: |
           echo "---- rabbitmq ----"
