@@ -16,7 +16,7 @@ env:
   # qdr container config
   QDROUTERD_IMAGE: quay.io/interconnectedcloud/qdrouterd:1.12.0
   # loki container config
-  LOKI_IMAGE: grafana/loki:2.1.0
+  LOKI_IMAGE: quay.io/infrawatch/loki:2.4.2
   # misc. config
   COVERALLS_TOKEN: ${{ secrets.COVERALLS_TOKEN }}
 on: push
@@ -51,6 +51,13 @@ jobs:
       - name: Start Loki
         run: |
           docker run --name loki --volume=$PWD/ci/loki-config.yaml:/etc/loki/loki-config.yaml:ro -p 3100:3100 -d $LOKI_IMAGE -config.file=/etc/loki/loki-config.yaml
+      - name: Wait for Loki to become ready
+        run: |
+          echo "========================== loki ========================="
+          while ! curl -sX GET "http://127.0.0.1:3100/ready" | grep -q "^ready$"
+          do
+            sleep 1
+          done
       - name: List dependency containers' logs
         run: |
           docker ps --all
@@ -66,7 +73,7 @@ jobs:
       - name: Run unit tests
         run: |
           export PROJECT_ROOT=/root/go/src/github.com/infrawatch/apputils
-          docker run -uroot --network host --volume=$PWD:$PROJECT_ROOT:z --workdir $PROJECT_ROOT centos:8 bash ci/run_ci.sh
+          docker run -uroot --network host --volume=$PWD:$PROJECT_ROOT:z --workdir $PROJECT_ROOT quay.io/centos/centos:stream8 bash ci/run_ci.sh
       - name: List dependency containers' logs
         run: |
           echo "---- rabbitmq ----"

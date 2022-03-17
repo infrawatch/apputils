@@ -14,6 +14,7 @@ export GOBIN=$GOPATH/bin
 export PATH=$PATH:$GOBIN
 
 # install apputils dependencies
+yum install -y epel-release
 yum install -y qpid-proton-c-devel git
 
 # run unit tests
