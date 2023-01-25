@@ -1,14 +1,18 @@
 name: Unit test suite run
 env:
   # sensu container config
-  SENSU_IMAGE: bitlayer/docker-sensu:1.9.0-1
+  SENSU_IMAGE: quay.io/infrawatch/sensu:1.9.0
   TRANSPORT_NAME: rabbitmq
   RABBITMQ_HOST: 127.0.0.1
-  RABBITMQ_USER: guest
-  RABBITMQ_PASSWORD: ""
+  RABBITMQ_PORT: 5672
+  RABBITMQ_USER: sensu
+  RABBITMQ_PASSWORD: sensu
   RABBITMQ_VHOST: "/sensu"
   REDIS_HOST: 127.0.0.1
   REDIS_PORT: 6379
+  REDIS_DB: 0
+  REDIS_AUTO_RECONNECT: true
+  REDIS_RECONNECT_ON_ERROR: false
   # redis container config
   REDIS_IMAGE: redis:6.2.1
   # rabbitmq container config
@@ -19,7 +23,10 @@ env:
   LOKI_IMAGE: quay.io/infrawatch/loki:2.4.2
   # misc. config
   COVERALLS_TOKEN: ${{ secrets.COVERALLS_TOKEN }}
-on: push
+on:
+  - push
+  - pull_request
+  - workflow_dispatch
 
 jobs:
   test-framework:
@@ -28,7 +35,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Start Redis
         run: |
           docker run --name redis -p 6379:6379 -d $REDIS_IMAGE
@@ -37,20 +44,34 @@ jobs:
           docker run --name=rabbitmq -p 5672:5672 -p 4369:4369 -d $RABBITMQ_IMAGE
       - name: Start qdrouterd message bus
         run: |
-          docker run --name=qdr --volume=$PWD/ci/qdrouterd.conf:/etc/qpid-dispatch/qdrouterd.conf:ro -p 5666:5666 -d $QDROUTERD_IMAGE
+          docker run --name=qdr --volume=${{ github.workspace }}/ci/qdrouterd.conf:/etc/qpid-dispatch/qdrouterd.conf:ro -p 5666:5666 -d $QDROUTERD_IMAGE
       - name: Configure RabbitMQ message bus for sensu-core usage
         run: |
           docker exec rabbitmq rabbitmqctl start_app
           sleep 5
-          docker exec rabbitmq rabbitmqctl add_vhost /sensu
-          docker exec rabbitmq rabbitmqctl set_permissions -p "/sensu" guest ".*" ".*" ".*"
+          docker exec rabbitmq rabbitmqctl add_user $RABBITMQ_USER $RABBITMQ_PASSWORD
+          docker exec rabbitmq rabbitmqctl add_vhost $RABBITMQ_VHOST
+          docker exec rabbitmq rabbitmqctl set_permissions -p $RABBITMQ_VHOST $RABBITMQ_USER ".*" ".*" ".*"
       - name: Start Sensu
         run: |
-          docker run --name sensu-api --network host --env-file=$PWD/ci/sensu-env.sh -d $SENSU_IMAGE api
-          docker run --name sensu-server --network host --env-file=$PWD/ci/sensu-env.sh --volume=$PWD/ci/sensu/check.d:/etc/sensu/check.d:ro -d $SENSU_IMAGE server
+          cat > ./sensu-env <<EOF
+          TRANSPORT_NAME=$TRANSPORT_NAME
+          RABBITMQ_HOST=$ABBITMQ_HOST
+          RABBITMQ_USER=$RABBITMQ_USER
+          RABBITMQ_PASSWORD=$RABBITMQ_PASSWORD
+          RABBITMQ_VHOST=$RABBITMQ_VHOST
+          REDIS_HOST=$REDIS_HOST
+          REDIS_PORT=$REDIS_PORT
+          REDIS_DB=$REDIS_DB
+          REDIS_AUTO_RECONNECT=$REDIS_AUTO_RECONNECT
+          REDIS_RECONNECT_ON_ERROR=$REDIS_RECONNECT_ON_ERROR
+          EOF
+
+          docker run --name sensu-api --network host --env-file=./sensu-env -d $SENSU_IMAGE api
+          docker run --name sensu-server --network host --env-file=./sensu-env --volume=${{ github.workspace }}/ci/sensu/check.d:/etc/sensu/check.d:ro -d $SENSU_IMAGE server
       - name: Start Loki
         run: |
-          docker run --name loki --volume=$PWD/ci/loki-config.yaml:/etc/loki/loki-config.yaml:ro -p 3100:3100 -d $LOKI_IMAGE -config.file=/etc/loki/loki-config.yaml
+          docker run --name loki --volume=${{ github.workspace }}/ci/loki-config.yaml:/etc/loki/loki-config.yaml:ro -p 3100:3100 -d $LOKI_IMAGE -config.file=/etc/loki/loki-config.yaml
       - name: Wait for Loki to become ready
         run: |
           echo "========================== loki ========================="
@@ -73,7 +94,7 @@ jobs:
       - name: Run unit tests
         run: |
           export PROJECT_ROOT=/root/go/src/github.com/infrawatch/apputils
-          docker run -uroot --network host --volume=$PWD:$PROJECT_ROOT:z --workdir $PROJECT_ROOT quay.io/centos/centos:stream8 bash ci/run_ci.sh
+          docker run -uroot --network host --volume=${{ github.workspace }}:$PROJECT_ROOT:z --workdir $PROJECT_ROOT quay.io/centos/centos:stream8 bash ci/run_ci.sh
       - name: List dependency containers' logs
         run: |
           echo "---- rabbitmq ----"

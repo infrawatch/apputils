@@ -18,6 +18,7 @@ import (
 	"github.com/infrawatch/apputils/connector/unixSocket"
 	"github.com/infrawatch/apputils/logging"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const (
@@ -458,8 +459,11 @@ func TestSensuCommunication(t *testing.T) {
 	defer logger.Destroy()
 
 	// check for "ci" subscribers is defined in ci/sensu/check.d/test.json
-	sensu, err := sensuPackage.CreateSensuConnector(logger, "amqp://127.0.0.1:5672//sensu", "ci-unit", "127.0.0.1", 1, []string{"ci"})
+	sensu, err := sensuPackage.CreateSensuConnector(logger, "amqp://sensu:sensu@127.0.0.1:5672//sensu", "ci-unit", "127.0.0.1", 1, []string{"ci"})
 	assert.NoError(t, err)
+
+	err = sensu.Connect()
+	require.NoError(t, err)
 
 	t.Run("Test communication with sensu-core server", func(t *testing.T) {
 		requests := make(chan interface{})
