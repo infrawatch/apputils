@@ -22,7 +22,12 @@ import (
 )
 
 const (
-	QDRMsg        = "{\"message\": \"smart gateway test\"}"
+	QDRMsg = "{\"labels\":{\"check\":\"test\",\"client\":\"fedora\",\"severity\":\"OKAY\"},\"annotations\":{\"command\":\"echo 'wubba lubba dub dub'\",\"duration\":0.002853846,\"executed\":1675108402," +
+		"\"issued\":1675108402,\"output\":\"wubba lubba dub dub\\n\",\"status\":0,\"ves\":\"{\\\"commonEventHeader\\\":{\\\"domain\\\":\\\"heartbeat\\\",\\\"eventType\\\":\\\"checkResult\\\"," +
+		"\\\"eventId\\\":\\\"fedora-test\\\",\\\"priority\\\":\\\"Normal\\\",\\\"reportingEntityId\\\":\\\"c1d13353-82aa-4370-bc53-db0d60d79c12\\\",\\\"reportingEntityName\\\":\\\"fedora\\\"," +
+		"\\\"sourceId\\\":\\\"c1d13353-82aa-4370-bc53-db0d60d79c12\\\",\\\"sourceName\\\":\\\"fedora-collectd-sensubility\\\",\\\"startingEpochMicrosec\\\":1675108402,\\\"lastEpochMicrosec\\\":1675108402}," +
+		"\\\"heartbeatFields\\\":{\\\"additionalFields\\\":{\\\"check\\\":\\\"test\\\",\\\"command\\\":\\\"echo 'wubba lubba dub dub'\\\",\\\"duration\\\":\\\"0.002854\\\",\\\"executed\":\\\"1675108402\"," +
+		"\\\"issued\\\":\\\"1675108402\\\",\\\"output\\\":\"wubba lubba dub dub\\n\\\",\\\"status\\\":\\\"0\\\"}}}\"},\"startsAt\":\"2023-01-30T20:53:22+01:00\"}}"
 	ConfigContent = `{
 	"LogLevel": "Debug",
 	"Amqp1": {
