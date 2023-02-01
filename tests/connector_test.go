@@ -217,11 +217,15 @@ func TestAMQP10SendAndReceiveMessage(t *testing.T) {
 
 	t.Run("Test receive", func(t *testing.T) {
 		t.Parallel()
-		data := <-receiver
-		assert.Equal(t, QDRMsg, (data.(amqp10.AMQP10Message)).Body)
+		for i := 0; i < 3; i++ {
+			data := <-receiver
+			assert.Equal(t, QDRMsg, (data.(amqp10.AMQP10Message)).Body)
+		}
 	})
 	t.Run("Test send and ACK", func(t *testing.T) {
 		t.Parallel()
+		sender <- amqp10.AMQP10Message{Address: "qdrtest", Body: QDRMsg}
+		sender <- amqp10.AMQP10Message{Address: "qdrtest", Body: QDRMsg}
 		sender <- amqp10.AMQP10Message{Address: "qdrtest", Body: QDRMsg}
 	})
 }
