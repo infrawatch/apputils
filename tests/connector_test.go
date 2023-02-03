@@ -18,10 +18,16 @@ import (
 	"github.com/infrawatch/apputils/connector/unixSocket"
 	"github.com/infrawatch/apputils/logging"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const (
-	QDRMsg        = "{\"message\": \"smart gateway test\"}"
+	QDRMsg = "{\"labels\":{\"check\":\"test\",\"client\":\"fedora\",\"severity\":\"OKAY\"},\"annotations\":{\"command\":\"echo 'wubba lubba dub dub'\",\"duration\":0.002853846,\"executed\":1675108402," +
+		"\"issued\":1675108402,\"output\":\"wubba lubba dub dub\\n\",\"status\":0,\"ves\":\"{\\\"commonEventHeader\\\":{\\\"domain\\\":\\\"heartbeat\\\",\\\"eventType\\\":\\\"checkResult\\\"," +
+		"\\\"eventId\\\":\\\"fedora-test\\\",\\\"priority\\\":\\\"Normal\\\",\\\"reportingEntityId\\\":\\\"c1d13353-82aa-4370-bc53-db0d60d79c12\\\",\\\"reportingEntityName\\\":\\\"fedora\\\"," +
+		"\\\"sourceId\\\":\\\"c1d13353-82aa-4370-bc53-db0d60d79c12\\\",\\\"sourceName\\\":\\\"fedora-collectd-sensubility\\\",\\\"startingEpochMicrosec\\\":1675108402,\\\"lastEpochMicrosec\\\":1675108402}," +
+		"\\\"heartbeatFields\\\":{\\\"additionalFields\\\":{\\\"check\\\":\\\"test\\\",\\\"command\\\":\\\"echo 'wubba lubba dub dub'\\\",\\\"duration\\\":\\\"0.002854\\\",\\\"executed\":\\\"1675108402\"," +
+		"\\\"issued\\\":\\\"1675108402\\\",\\\"output\\\":\"wubba lubba dub dub\\n\\\",\\\"status\\\":\\\"0\\\"}}}\"},\"startsAt\":\"2023-01-30T20:53:22+01:00\"}}"
 	ConfigContent = `{
 	"LogLevel": "Debug",
 	"Amqp1": {
@@ -211,11 +217,15 @@ func TestAMQP10SendAndReceiveMessage(t *testing.T) {
 
 	t.Run("Test receive", func(t *testing.T) {
 		t.Parallel()
-		data := <-receiver
-		assert.Equal(t, QDRMsg, (data.(amqp10.AMQP10Message)).Body)
+		for i := 0; i < 3; i++ {
+			data := <-receiver
+			assert.Equal(t, QDRMsg, (data.(amqp10.AMQP10Message)).Body)
+		}
 	})
 	t.Run("Test send and ACK", func(t *testing.T) {
 		t.Parallel()
+		sender <- amqp10.AMQP10Message{Address: "qdrtest", Body: QDRMsg}
+		sender <- amqp10.AMQP10Message{Address: "qdrtest", Body: QDRMsg}
 		sender <- amqp10.AMQP10Message{Address: "qdrtest", Body: QDRMsg}
 	})
 }
@@ -458,8 +468,11 @@ func TestSensuCommunication(t *testing.T) {
 	defer logger.Destroy()
 
 	// check for "ci" subscribers is defined in ci/sensu/check.d/test.json
-	sensu, err := sensuPackage.CreateSensuConnector(logger, "amqp://127.0.0.1:5672//sensu", "ci-unit", "127.0.0.1", 1, []string{"ci"})
+	sensu, err := sensuPackage.CreateSensuConnector(logger, "amqp://sensu:sensu@127.0.0.1:5672//sensu", "ci-unit", "127.0.0.1", 1, []string{"ci"})
 	assert.NoError(t, err)
+
+	err = sensu.Connect()
+	require.NoError(t, err)
 
 	t.Run("Test communication with sensu-core server", func(t *testing.T) {
 		requests := make(chan interface{})
