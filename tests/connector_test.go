@@ -23,12 +23,12 @@ import (
 )
 
 const (
-	QDRMsg1 = "{\"labels\":{\"check\":\"test\",\"client\":\"fedora\",\"severity\":\"OKAY\"},\"annotations\":{\"command\":\"echo 'wubba lubba dub dub'\",\"duration\":0.002853846,\"executed\":1675108402," +
-		"\"issued\":1675108402,\"output\":\"wubba lubba dub dub\\n\",\"status\":0,\"ves\":\"{\\\"commonEventHeader\\\":{\\\"domain\\\":\\\"heartbeat\\\",\\\"eventType\\\":\\\"checkResult\\\"," +
+	QDRMsg1 = "{\"labels\":{\"check\":\"test\",\"client\":\"fedora\",\"severity\":\"OKAY\"},\"annotations\":{\"command\":\"echo 'Test transfer'\",\"duration\":0.002853846,\"executed\":1675108402," +
+		"\"issued\":1675108402,\"output\":\"Test transfer\\n\",\"status\":0,\"ves\":\"{\\\"commonEventHeader\\\":{\\\"domain\\\":\\\"heartbeat\\\",\\\"eventType\\\":\\\"checkResult\\\"," +
 		"\\\"eventId\\\":\\\"fedora-test\\\",\\\"priority\\\":\\\"Normal\\\",\\\"reportingEntityId\\\":\\\"c1d13353-82aa-4370-bc53-db0d60d79c12\\\",\\\"reportingEntityName\\\":\\\"fedora\\\"," +
 		"\\\"sourceId\\\":\\\"c1d13353-82aa-4370-bc53-db0d60d79c12\\\",\\\"sourceName\\\":\\\"fedora-collectd-sensubility\\\",\\\"startingEpochMicrosec\\\":1675108402,\\\"lastEpochMicrosec\\\":1675108402}," +
-		"\\\"heartbeatFields\\\":{\\\"additionalFields\\\":{\\\"check\\\":\\\"test\\\",\\\"command\\\":\\\"echo 'wubba lubba dub dub'\\\",\\\"duration\\\":\\\"0.002854\\\",\\\"executed\":\\\"1675108402\"," +
-		"\\\"issued\\\":\\\"1675108402\\\",\\\"output\\\":\"wubba lubba dub dub\\n\\\",\\\"status\\\":\\\"0\\\"}}}\"},\"startsAt\":\"2023-01-30T20:53:22+01:00\"}}"
+		"\\\"heartbeatFields\\\":{\\\"additionalFields\\\":{\\\"check\\\":\\\"test\\\",\\\"command\\\":\\\"echo 'Test transfer'\\\",\\\"duration\\\":\\\"0.002854\\\",\\\"executed\":\\\"1675108402\"," +
+		"\\\"issued\\\":\\\"1675108402\\\",\\\"output\\\":\"Test transfer\\n\\\",\\\"status\\\":\\\"0\\\"}}}\"},\"startsAt\":\"2023-01-30T20:53:22+01:00\"}}"
 	QDRMsg2       = "{\"message\": \"smart gateway reconnect test\"}"
 	ConfigContent = `{
 	"LogLevel": "Debug",
@@ -111,7 +111,7 @@ func TestUnixSocketSendAndReceiveMessage(t *testing.T) {
 	defer logger.Destroy()
 
 	metadata := map[string][]config.Parameter{
-		"Socket": []config.Parameter{},
+		"Socket": {},
 	}
 	cfg := config.NewJSONConfig(metadata, logger)
 	cfg.AddStructured("Socket", "In", ``, MockedSocket{})
@@ -190,8 +190,8 @@ func TestAMQP10SendAndReceiveMessage(t *testing.T) {
 	defer logger.Destroy()
 
 	metadata := map[string][]config.Parameter{
-		"Amqp1": []config.Parameter{
-			config.Parameter{Name: "LogFile", Tag: ``, Default: logpath, Validators: []config.Validator{}},
+		"Amqp1": {
+			{Name: "LogFile", Tag: ``, Default: logpath, Validators: []config.Validator{}},
 		},
 	}
 	cfg := config.NewJSONConfig(metadata, logger)
@@ -215,7 +215,7 @@ func TestAMQP10SendAndReceiveMessage(t *testing.T) {
 
 	receiver := make(chan interface{})
 	sender := make(chan interface{})
-	conn.Start(receiver, sender)
+	cwg := conn.Start(receiver, sender)
 
 	t.Run("Test transport", func(t *testing.T) {
 		var wg sync.WaitGroup
@@ -241,9 +241,10 @@ func TestAMQP10SendAndReceiveMessage(t *testing.T) {
 	})
 
 	t.Run("Test reconnect", func(t *testing.T) {
-		require.NoError(t, conn.Reconnect("out"))
-		require.NoError(t, conn.Reconnect("in"))
 		var wg sync.WaitGroup
+
+		require.NoError(t, conn.Reconnect("in", receiver, cwg))
+		require.NoError(t, conn.Reconnect("out", receiver, cwg))
 
 		wg.Add(1)
 		go func() {
@@ -263,6 +264,8 @@ func TestAMQP10SendAndReceiveMessage(t *testing.T) {
 		}()
 
 		wg.Wait()
+		conn.Disconnect()
+		cwg.Wait()
 	})
 
 }
@@ -281,8 +284,8 @@ func TestLoki(t *testing.T) {
 	defer logger.Destroy()
 
 	metadata := map[string][]config.Parameter{
-		"Loki": []config.Parameter{
-			config.Parameter{Name: "LogFile", Tag: ``, Default: logpath, Validators: []config.Validator{}},
+		"Loki": {
+			{Name: "LogFile", Tag: ``, Default: logpath, Validators: []config.Validator{}},
 		},
 	}
 	cfg := config.NewJSONConfig(metadata, logger)

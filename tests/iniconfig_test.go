@@ -61,16 +61,16 @@ func TestINIConfigValues(t *testing.T) {
 	defer log.Destroy()
 
 	metadata := map[string][]config.Parameter{
-		"default": []config.Parameter{
-			config.Parameter{Name: "log_file", Tag: "", Default: "/var/log/collectd-sensubility.log", Validators: []config.Validator{}},
-			config.Parameter{Name: "log_level", Tag: "", Default: "INFO", Validators: []config.Validator{config.StringOptionsValidatorFactory([]string{"DEBUG", "INFO", "WARNING", "ERROR"})}},
-			config.Parameter{Name: "allow_exec", Tag: "", Default: true, Validators: []config.Validator{config.BoolValidatorFactory()}},
+		"default": {
+			{Name: "log_file", Tag: "", Default: "/var/log/collectd-sensubility.log", Validators: []config.Validator{}},
+			{Name: "log_level", Tag: "", Default: "INFO", Validators: []config.Validator{config.StringOptionsValidatorFactory([]string{"DEBUG", "INFO", "WARNING", "ERROR"})}},
+			{Name: "allow_exec", Tag: "", Default: true, Validators: []config.Validator{config.BoolValidatorFactory()}},
 		},
-		"amqp1": []config.Parameter{
-			config.Parameter{Name: "host", Tag: "", Default: "localhost", Validators: []config.Validator{}},
-			config.Parameter{Name: "port", Tag: "", Default: 5666, Validators: []config.Validator{config.IntValidatorFactory()}},
-			config.Parameter{Name: "user", Tag: "", Default: "guest", Validators: []config.Validator{}},
-			config.Parameter{Name: "password", Tag: "", Default: "guest", Validators: []config.Validator{}},
+		"amqp1": {
+			{Name: "host", Tag: "", Default: "localhost", Validators: []config.Validator{}},
+			{Name: "port", Tag: "", Default: 5666, Validators: []config.Validator{config.IntValidatorFactory()}},
+			{Name: "user", Tag: "", Default: "guest", Validators: []config.Validator{}},
+			{Name: "password", Tag: "", Default: "guest", Validators: []config.Validator{}},
 		},
 	}
 	conf := config.NewINIConfig(metadata, log)
@@ -120,15 +120,15 @@ func TestValidators(t *testing.T) {
 
 	t.Run("Test parsed values from INI configuration file", func(t *testing.T) {
 		tests := []ValidatorTest{
-			ValidatorTest{"IntValidator", config.IntValidatorFactory(), "3"},
-			ValidatorTest{"MultiIntValidator", config.MultiIntValidatorFactory(","), "1,2"},
-			ValidatorTest{"BoolValidator", config.BoolValidatorFactory(), "true"},
-			ValidatorTest{"OptionsValidator", config.StringOptionsValidatorFactory([]string{"bar", "baz"}), "bar"},
+			{"IntValidator", config.IntValidatorFactory(), "3"},
+			{"MultiIntValidator", config.MultiIntValidatorFactory(","), "1,2"},
+			{"BoolValidator", config.BoolValidatorFactory(), "true"},
+			{"OptionsValidator", config.StringOptionsValidatorFactory([]string{"bar", "baz"}), "bar"},
 		}
 		for _, test := range tests {
 			metadata := map[string][]config.Parameter{
-				"invalid": []config.Parameter{
-					config.Parameter{Name: test.Parameter, Tag: "", Default: test.defValue, Validators: []config.Validator{test.Validator}},
+				"invalid": {
+					{Name: test.Parameter, Tag: "", Default: test.defValue, Validators: []config.Validator{test.Validator}},
 				},
 			}
 			conf := config.NewINIConfig(metadata, log)
@@ -141,8 +141,8 @@ func TestValidators(t *testing.T) {
 
 	t.Run("Test of raising validation errors", func(t *testing.T) {
 		metadata := map[string][]config.Parameter{
-			"invalid": []config.Parameter{
-				config.Parameter{Name: "default_test", Tag: "", Default: "default", Validators: []config.Validator{config.IntValidatorFactory()}},
+			"invalid": {
+				{Name: "default_test", Tag: "", Default: "default", Validators: []config.Validator{config.IntValidatorFactory()}},
 			},
 		}
 		conf := config.NewINIConfig(metadata, log)
@@ -153,8 +153,8 @@ func TestValidators(t *testing.T) {
 
 	t.Run("Test of fetching option dynamically", func(t *testing.T) {
 		metadata := map[string][]config.Parameter{
-			"default": []config.Parameter{
-				config.Parameter{Name: "log_file", Tag: "", Default: "/var/log/collectd-sensubility.log", Validators: []config.Validator{}},
+			"default": {
+				{Name: "log_file", Tag: "", Default: "/var/log/collectd-sensubility.log", Validators: []config.Validator{}},
 			},
 		}
 		conf := config.NewINIConfig(metadata, log)

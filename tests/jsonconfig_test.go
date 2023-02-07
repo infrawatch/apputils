@@ -48,15 +48,15 @@ var (
 	}
 `
 	JSONConfigMetadata = map[string][]config.Parameter{
-		"Default": []config.Parameter{
-			config.Parameter{Name: "LogFile", Tag: `json:"log_file"`, Default: "/var/log/the.log", Validators: []config.Validator{}},
-			config.Parameter{Name: "NoTag", Tag: "", Default: "notag", Validators: []config.Validator{}},
-			config.Parameter{Name: "LogLevel", Tag: `json:"log_level"`, Default: "INFO", Validators: []config.Validator{config.StringOptionsValidatorFactory([]string{"DEBUG", "INFO", "WARNING", "ERROR"})}},
-			config.Parameter{Name: "AllowExec", Tag: `json:"allow_exec"`, Default: true, Validators: []config.Validator{config.BoolValidatorFactory()}},
-			config.Parameter{Name: "Port", Tag: `json:"port"`, Default: 5666, Validators: []config.Validator{config.IntValidatorFactory()}},
+		"Default": {
+			{Name: "LogFile", Tag: `json:"log_file"`, Default: "/var/log/the.log", Validators: []config.Validator{}},
+			{Name: "NoTag", Tag: "", Default: "notag", Validators: []config.Validator{}},
+			{Name: "LogLevel", Tag: `json:"log_level"`, Default: "INFO", Validators: []config.Validator{config.StringOptionsValidatorFactory([]string{"DEBUG", "INFO", "WARNING", "ERROR"})}},
+			{Name: "AllowExec", Tag: `json:"allow_exec"`, Default: true, Validators: []config.Validator{config.BoolValidatorFactory()}},
+			{Name: "Port", Tag: `json:"port"`, Default: 5666, Validators: []config.Validator{config.IntValidatorFactory()}},
 		},
-		"Amqp1": []config.Parameter{
-			config.Parameter{Name: "Float", Tag: `json:"float"`, Default: 6.6, Validators: []config.Validator{}},
+		"Amqp1": {
+			{Name: "Float", Tag: `json:"float"`, Default: 6.6, Validators: []config.Validator{}},
 		},
 	}
 )
@@ -122,7 +122,7 @@ func TestJSONConfigValues(t *testing.T) {
 		connObj := conf.Sections["Amqp1"].Options["Connections"].GetStructured()
 		connTypedObj := connObj.(OuterTestObject)
 		assert.Equal(t, "woobalooba", connTypedObj.Test, "Did not parse correctly")
-		parsedConnections := []InnerTestObject{InnerTestObject{"test1", "booyaka"}, InnerTestObject{"test2", "foobar"}}
+		parsedConnections := []InnerTestObject{{"test1", "booyaka"}, {"test2", "foobar"}}
 		assert.Equal(t, parsedConnections, connTypedObj.Connections, "Did not parse correctly")
 	})
 
@@ -136,8 +136,8 @@ func TestJSONConfigValues(t *testing.T) {
 		}
 
 		cases := []DynamicFetchTest{
-			DynamicFetchTest{"Amqp1.Connections.Test", "woobalooba"},
-			DynamicFetchTest{"Default.LogFile", "/var/log/another.log"},
+			{"Amqp1.Connections.Test", "woobalooba"},
+			{"Default.LogFile", "/var/log/another.log"},
 		}
 		for _, test := range cases {
 			if opt, err := conf.GetOption(test.AddrStr); err != nil {
