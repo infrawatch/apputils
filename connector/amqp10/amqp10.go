@@ -113,6 +113,9 @@ func ConnectAMQP10(appName string, cfg config.Config, logger *logging.Logger) (*
 	if err != nil {
 		return nil, err
 	}
+	if opt == nil {
+		return nil, fmt.Errorf("Failed to get connection URL from configuration file")
+	}
 	addr := opt.GetString()
 
 	switch conf := cfg.(type) {
