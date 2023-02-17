@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,18 +23,19 @@ import (
 )
 
 const (
-	QDRMsg = "{\"labels\":{\"check\":\"test\",\"client\":\"fedora\",\"severity\":\"OKAY\"},\"annotations\":{\"command\":\"echo 'wubba lubba dub dub'\",\"duration\":0.002853846,\"executed\":1675108402," +
-		"\"issued\":1675108402,\"output\":\"wubba lubba dub dub\\n\",\"status\":0,\"ves\":\"{\\\"commonEventHeader\\\":{\\\"domain\\\":\\\"heartbeat\\\",\\\"eventType\\\":\\\"checkResult\\\"," +
+	QDRMsg1 = "{\"labels\":{\"check\":\"test\",\"client\":\"fedora\",\"severity\":\"OKAY\"},\"annotations\":{\"command\":\"echo 'Test transfer'\",\"duration\":0.002853846,\"executed\":1675108402," +
+		"\"issued\":1675108402,\"output\":\"Test transfer\\n\",\"status\":0,\"ves\":\"{\\\"commonEventHeader\\\":{\\\"domain\\\":\\\"heartbeat\\\",\\\"eventType\\\":\\\"checkResult\\\"," +
 		"\\\"eventId\\\":\\\"fedora-test\\\",\\\"priority\\\":\\\"Normal\\\",\\\"reportingEntityId\\\":\\\"c1d13353-82aa-4370-bc53-db0d60d79c12\\\",\\\"reportingEntityName\\\":\\\"fedora\\\"," +
 		"\\\"sourceId\\\":\\\"c1d13353-82aa-4370-bc53-db0d60d79c12\\\",\\\"sourceName\\\":\\\"fedora-collectd-sensubility\\\",\\\"startingEpochMicrosec\\\":1675108402,\\\"lastEpochMicrosec\\\":1675108402}," +
-		"\\\"heartbeatFields\\\":{\\\"additionalFields\\\":{\\\"check\\\":\\\"test\\\",\\\"command\\\":\\\"echo 'wubba lubba dub dub'\\\",\\\"duration\\\":\\\"0.002854\\\",\\\"executed\":\\\"1675108402\"," +
-		"\\\"issued\\\":\\\"1675108402\\\",\\\"output\\\":\"wubba lubba dub dub\\n\\\",\\\"status\\\":\\\"0\\\"}}}\"},\"startsAt\":\"2023-01-30T20:53:22+01:00\"}}"
+		"\\\"heartbeatFields\\\":{\\\"additionalFields\\\":{\\\"check\\\":\\\"test\\\",\\\"command\\\":\\\"echo 'Test transfer'\\\",\\\"duration\\\":\\\"0.002854\\\",\\\"executed\":\\\"1675108402\"," +
+		"\\\"issued\\\":\\\"1675108402\\\",\\\"output\\\":\"Test transfer\\n\\\",\\\"status\\\":\\\"0\\\"}}}\"},\"startsAt\":\"2023-01-30T20:53:22+01:00\"}}"
+	QDRMsg2       = "{\"message\": \"smart gateway reconnect test\"}"
 	ConfigContent = `{
 	"LogLevel": "Debug",
 	"Amqp1": {
 		"Connection": {
 			"Address": "amqp://127.0.0.1:5666",
-		  "SendTimeout": 2
+		  	"SendTimeout": 2
 		},
 		"Client": {
 			"Name": "connectortest"
@@ -109,7 +111,7 @@ func TestUnixSocketSendAndReceiveMessage(t *testing.T) {
 	defer logger.Destroy()
 
 	metadata := map[string][]config.Parameter{
-		"Socket": []config.Parameter{},
+		"Socket": {},
 	}
 	cfg := config.NewJSONConfig(metadata, logger)
 	cfg.AddStructured("Socket", "In", ``, MockedSocket{})
@@ -188,8 +190,8 @@ func TestAMQP10SendAndReceiveMessage(t *testing.T) {
 	defer logger.Destroy()
 
 	metadata := map[string][]config.Parameter{
-		"Amqp1": []config.Parameter{
-			config.Parameter{Name: "LogFile", Tag: ``, Default: logpath, Validators: []config.Validator{}},
+		"Amqp1": {
+			{Name: "LogFile", Tag: ``, Default: logpath, Validators: []config.Validator{}},
 		},
 	}
 	cfg := config.NewJSONConfig(metadata, logger)
@@ -201,7 +203,7 @@ func TestAMQP10SendAndReceiveMessage(t *testing.T) {
 		t.Fatalf("Failed to parse config file: %s", err)
 	}
 
-	conn, err := amqp10.ConnectAMQP10(cfg, logger)
+	conn, err := amqp10.ConnectAMQP10("ci", cfg, logger)
 	if err != nil {
 		t.Fatalf("Failed to connect to QDR: %s", err)
 	}
@@ -213,21 +215,59 @@ func TestAMQP10SendAndReceiveMessage(t *testing.T) {
 
 	receiver := make(chan interface{})
 	sender := make(chan interface{})
-	conn.Start(receiver, sender)
+	cwg := conn.Start(receiver, sender)
 
-	t.Run("Test receive", func(t *testing.T) {
-		t.Parallel()
-		for i := 0; i < 3; i++ {
-			data := <-receiver
-			assert.Equal(t, QDRMsg, (data.(amqp10.AMQP10Message)).Body)
-		}
+	t.Run("Test transport", func(t *testing.T) {
+		var wg sync.WaitGroup
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 3; i++ {
+				data := <-receiver
+				assert.Equal(t, QDRMsg1, (data.(amqp10.AMQP10Message)).Body)
+			}
+		}()
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sender <- amqp10.AMQP10Message{Address: "qdrtest", Body: QDRMsg1}
+			sender <- amqp10.AMQP10Message{Address: "qdrtest", Body: QDRMsg1}
+			sender <- amqp10.AMQP10Message{Address: "qdrtest", Body: QDRMsg1}
+		}()
+
+		wg.Wait()
 	})
-	t.Run("Test send and ACK", func(t *testing.T) {
-		t.Parallel()
-		sender <- amqp10.AMQP10Message{Address: "qdrtest", Body: QDRMsg}
-		sender <- amqp10.AMQP10Message{Address: "qdrtest", Body: QDRMsg}
-		sender <- amqp10.AMQP10Message{Address: "qdrtest", Body: QDRMsg}
+
+	t.Run("Test reconnect", func(t *testing.T) {
+		var wg sync.WaitGroup
+
+		require.NoError(t, conn.Reconnect("in", receiver, cwg))
+		require.NoError(t, conn.Reconnect("out", receiver, cwg))
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 3; i++ {
+				data := <-receiver
+				assert.Equal(t, QDRMsg2, (data.(amqp10.AMQP10Message)).Body)
+			}
+		}()
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sender <- amqp10.AMQP10Message{Address: "qdrtest", Body: QDRMsg2}
+			sender <- amqp10.AMQP10Message{Address: "qdrtest", Body: QDRMsg2}
+			sender <- amqp10.AMQP10Message{Address: "qdrtest", Body: QDRMsg2}
+		}()
+
+		wg.Wait()
+		conn.Disconnect()
+		cwg.Wait()
 	})
+
 }
 
 func TestLoki(t *testing.T) {
@@ -244,8 +284,8 @@ func TestLoki(t *testing.T) {
 	defer logger.Destroy()
 
 	metadata := map[string][]config.Parameter{
-		"Loki": []config.Parameter{
-			config.Parameter{Name: "LogFile", Tag: ``, Default: logpath, Validators: []config.Validator{}},
+		"Loki": {
+			{Name: "LogFile", Tag: ``, Default: logpath, Validators: []config.Validator{}},
 		},
 	}
 	cfg := config.NewJSONConfig(metadata, logger)
