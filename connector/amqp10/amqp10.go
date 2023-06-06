@@ -455,6 +455,7 @@ func (conn *AMQP10Connector) Start(outchan chan interface{}, inchan chan interfa
 
 	ackchan := make(chan electron.Outcome)
 	linkFail := int64(0)
+	lastAck := int64(0)
 	lfLock := sync.RWMutex{}
 
 	// ACK and error verification goroutine
@@ -492,8 +493,10 @@ func (conn *AMQP10Connector) Start(outchan chan interface{}, inchan chan interfa
 					linkFail = 0
 					lfLock.Unlock()
 					conn.logger.Metadata(logging.Metadata{
-						"id": ack.Value,
+						"id":  ack.Value,
+						"ack": ack.Status,
 					})
+					lastAck = ack.Value.(int64)
 					conn.logger.Debug("Sent message ACKed.")
 				}
 			case <-conn.interrupt:
@@ -539,6 +542,7 @@ func (conn *AMQP10Connector) Start(outchan chan interface{}, inchan chan interfa
 					} else {
 						if s, err := conn.CreateSender(message.Address); err != nil {
 							conn.logger.Metadata(logging.Metadata{
+								"cause":  "creating sender failed",
 								"reason": err,
 							})
 							conn.logger.Warn("Skipping processing message")
@@ -554,6 +558,28 @@ func (conn *AMQP10Connector) Start(outchan chan interface{}, inchan chan interfa
 							lfLock.Unlock()
 							sender = s
 						}
+					}
+					if err := (*sender).Error(); err != nil {
+						// verify sender connection
+						conn.logger.Metadata(logging.Metadata{
+							"cause":  "sender disconnected",
+							"reason": err,
+						})
+						conn.logger.Warn("Skipping processing message")
+
+						lfLock.Lock()
+						linkFail += 1
+						lfLock.Unlock()
+						continue
+					}
+
+					missingAcks := counter - lastAck
+					if missingAcks > conn.LinkFailureLimit {
+						conn.logger.Metadata(logging.Metadata{
+							"count":      missingAcks,
+							"last ACKed": lastAck,
+						})
+						conn.logger.Warn("Multiple results not ACKed. Receiver is probably inaccessible.")
 					}
 
 					counter += int64(1)
