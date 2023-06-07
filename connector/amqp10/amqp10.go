@@ -542,11 +542,11 @@ func (conn *AMQP10Connector) Start(outchan chan interface{}, inchan chan interfa
 					} else {
 						if s, err := conn.CreateSender(message.Address); err != nil {
 							conn.logger.Metadata(logging.Metadata{
-								"cause":  "creating sender failed",
-								"reason": err,
+								"cause":   "creating sender failed",
+								"reason":  err,
+								"address": message.Address,
 							})
 							conn.logger.Warn("Skipping processing message")
-							(*s).Close(nil)
 
 							lfLock.Lock()
 							linkFail += 1
@@ -562,8 +562,9 @@ func (conn *AMQP10Connector) Start(outchan chan interface{}, inchan chan interfa
 					if err := (*sender).Error(); err != nil {
 						// verify sender connection
 						conn.logger.Metadata(logging.Metadata{
-							"cause":  "sender disconnected",
-							"reason": err,
+							"cause":   "sender disconnected",
+							"reason":  err,
+							"address": message.Address,
 						})
 						conn.logger.Warn("Skipping processing message")
 
