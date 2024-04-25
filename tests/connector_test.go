@@ -177,7 +177,7 @@ func TestUnixSocketSendAndReceiveMessage(t *testing.T) {
 }
 
 func TestAMQP10SendAndReceiveMessage(t *testing.T) {
-	tmpdir, err := ioutil.TempDir(".", "connector_test_tmp")
+	tmpdir, err := os.MkdirTemp(".", "connector_test_tmp")
 	if err != nil {
 		log.Fatal(err)
 	}

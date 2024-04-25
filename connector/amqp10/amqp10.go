@@ -1,6 +1,8 @@
 package amqp10
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"strings"
@@ -10,44 +12,45 @@ import (
 	"github.com/infrawatch/apputils/config"
 	"github.com/infrawatch/apputils/logging"
 
-	"github.com/apache/qpid-proton/go/pkg/amqp"
-	"github.com/apache/qpid-proton/go/pkg/electron"
+	amqp "github.com/Azure/go-amqp"
 )
 
 const (
 	defaultSendTimeout      = 2
-	defaultListenPrefetch   = -1
+	defaultListenPrefetch   = 1
 	defaultClientName       = "localhost"
 	defaultLinkFailureLimit = 20
+	defaultMaxParalelSend   = 128
 )
-
-// AMQP10Receiver is tagged electron receiver
-type AMQP10Receiver struct {
-	Receiver electron.Receiver
-	Tags     []string
-}
 
 // AMQP10Connector is the object to be used for communication with AMQP-1.0 entity
 type AMQP10Connector struct {
-	Address          string
-	ClientName       string
-	SendTimeout      int64
-	ListenPrefetch   int64
-	LinkFailureLimit int64
-	appName          string
-	inConnection     electron.Connection
-	outConnection    electron.Connection
-	receivers        []AMQP10Receiver
-	senders          map[string]electron.Sender
-	logger           *logging.Logger
-	interrupt        chan bool
+	Address             string
+	ClientName          string
+	SendTimeout         int64
+	ListenPrefetch      int64
+	LinkFailureLimit    int64
+	MaxParalelSendLimit int64
+	appName             string
+	inConnection        *amqp.Session
+	outConnection       *amqp.Session
+	receivers           map[string]*amqp.Receiver
+	senders             map[string]*amqp.Sender
+	logger              *logging.Logger
+	interrupt           chan bool
 }
 
 // AMQP10Message holds received (or to be sent) messages from (to) AMQP-1.0 entity
 type AMQP10Message struct {
 	Address string
 	Body    string
-	Tags    []string
+	id      uint64
+}
+
+// SetIdFromCounter sets message id from shared counter
+func (m *AMQP10Message) SetIdFromCounter(counter *uint64) {
+	(*counter) += 1
+	m.id = *counter
 }
 
 //-------------------------- constructors and their helpers --------------------------
@@ -70,20 +73,29 @@ func bindListenChannels(conn *AMQP10Connector, listen []string) error {
 }
 
 // CreateAMQP10Connector creates the connector and connects to given AMQP1.0 service
-func CreateAMQP10Connector(logger *logging.Logger, address string, clientName string,
-	appName string, sendTimeout int64, linkFailureLimit int64, listenPrefetch int64,
-	listenChannels []string) (*AMQP10Connector, error) {
+func CreateAMQP10Connector(
+	logger *logging.Logger,
+	address string,
+	clientName string,
+	appName string,
+	sendTimeout int64,
+	linkFailureLimit int64,
+	maxParalelLimit int64,
+	listenPrefetch int64,
+	listenChannels []string,
+) (*AMQP10Connector, error) {
 	connector := AMQP10Connector{
-		Address:          address,
-		ClientName:       clientName,
-		SendTimeout:      sendTimeout,
-		ListenPrefetch:   listenPrefetch,
-		LinkFailureLimit: linkFailureLimit,
-		appName:          appName,
-		logger:           logger,
-		receivers:        make([]AMQP10Receiver, 0),
-		senders:          make(map[string]electron.Sender),
-		interrupt:        make(chan bool),
+		Address:             address,
+		ClientName:          clientName,
+		SendTimeout:         sendTimeout,
+		ListenPrefetch:      listenPrefetch,
+		LinkFailureLimit:    linkFailureLimit,
+		MaxParalelSendLimit: maxParalelLimit,
+		appName:             appName,
+		logger:              logger,
+		receivers:           make(map[string]*amqp.Receiver),
+		senders:             make(map[string]*amqp.Sender),
+		interrupt:           make(chan bool),
 	}
 
 	// connect
@@ -142,6 +154,17 @@ func ConnectAMQP10(appName string, cfg config.Config, logger *logging.Logger) (*
 
 	switch conf := cfg.(type) {
 	case *config.INIConfig:
+		opt, err = conf.GetOption("amqp1/send_max_in_paralel")
+	case *config.JSONConfig:
+		opt, err = conf.GetOption("Amqp1.Connection.SendMaxInParalel")
+	}
+	maxParalelLimit := int64(defaultMaxParalelSend)
+	if opt != nil && err == nil {
+		maxParalelLimit = opt.GetInt()
+	}
+
+	switch conf := cfg.(type) {
+	case *config.INIConfig:
 		opt, err = conf.GetOption("amqp1/client_name")
 	case *config.JSONConfig:
 		opt, err = conf.GetOption("Amqp1.Client.Name")
@@ -173,23 +196,16 @@ func ConnectAMQP10(appName string, cfg config.Config, logger *logging.Logger) (*
 		prf = opt.GetInt()
 	}
 
-	return CreateAMQP10Connector(logger, addr, clientName, appName, sendTimeout, linkLimit, prf, listen)
+	return CreateAMQP10Connector(logger, addr, clientName, appName, sendTimeout, linkLimit, maxParalelLimit, prf, listen)
 }
 
 //---------------------------- connect helpers and method ----------------------------
 
-func dial(address, containerName string) (*electron.Connection, error) {
-	url, err := amqp.ParseURL(address)
-	if err != nil {
-		return nil, fmt.Errorf("Error while parsing AMQP1.0 URL: %s", address)
+func dial(address, containerName string) (*amqp.Conn, error) {
+	opts := amqp.ConnOptions{
+		ContainerID: containerName,
 	}
-
-	container := electron.NewContainer(containerName)
-	conn, err := container.Dial("tcp", url.Host)
-	if err != nil {
-		return nil, fmt.Errorf("AMQP dial TCP error: %s", err.Error())
-	}
-	return &conn, err
+	return amqp.Dial(context.Background(), address, &opts)
 }
 
 func (conn *AMQP10Connector) connect(connType string) error {
@@ -202,12 +218,20 @@ func (conn *AMQP10Connector) connect(connType string) error {
 		conn.logger.Debug("Failed to create AMQP1.0 connection")
 		return err
 	}
+	sess, err := c.NewSession(context.Background(), nil)
+	if err != nil {
+		conn.logger.Metadata(map[string]interface{}{
+			"container": container,
+		})
+		conn.logger.Debug("Failed to create AMQP1.0 session")
+		return err
+	}
 
 	switch connType {
 	case "in":
-		conn.inConnection = *c
+		conn.inConnection = sess
 	case "out":
-		conn.outConnection = *c
+		conn.outConnection = sess
 	}
 	return nil
 }
@@ -234,44 +258,51 @@ func (conn *AMQP10Connector) Connect() error {
 
 // CreateReceiver creates electron.Receiver for given address
 func (conn *AMQP10Connector) CreateReceiver(address string, prefetch int) error {
-	addr := strings.TrimPrefix(address, "/")
-	parts := strings.Split(addr, ":")
+	channel := strings.TrimPrefix(address, "/")
 
-	opts := []electron.LinkOption{electron.Source(parts[0])}
 	if prefetch > 0 {
 		conn.logger.Metadata(map[string]interface{}{
 			"address":  address,
 			"prefetch": prefetch,
 		})
 		conn.logger.Debug("Setting prefetch for address")
-		opts = append(opts, electron.Capacity(prefetch), electron.Prefetch(true))
+	}
+	if prefetch < 1 {
+		// credit has to be at least 1
+		prefetch = 1
+	}
+	opts := amqp.ReceiverOptions{
+		Credit: int32(prefetch),
 	}
 
-	if rcv, err := conn.inConnection.Receiver(opts...); err == nil {
-		conn.receivers = append(conn.receivers, AMQP10Receiver{rcv, parts[1:]})
-	} else {
-		conn.logger.Metadata(map[string]interface{}{
-			"address": address,
+	rcv, err := conn.inConnection.NewReceiver(context.Background(), channel, &opts)
+	if err != nil {
+		conn.logger.Metadata(logging.Metadata{
+			"address": channel,
 			"error":   err,
 		})
 		conn.logger.Debug("Failed to create receiver for given address")
 		return err
 	}
+
+	conn.receivers[channel] = rcv
 	return nil
 }
 
 // CreateSender creates electron.Sender for given address
-func (conn *AMQP10Connector) CreateSender(address string) (*electron.Sender, error) {
+func (conn *AMQP10Connector) CreateSender(address string) (*amqp.Sender, error) {
 	channel := strings.TrimPrefix(address, "/")
 	if s, ok := conn.senders[channel]; ok {
 		s.Close(nil)
 		delete(conn.senders, channel)
 	}
 
-	var err error
-	var snd electron.Sender
-	opts := []electron.LinkOption{electron.Target(address), electron.AtMostOnce()}
-	if snd, err = conn.outConnection.Sender(opts...); err != nil {
+	opts := amqp.SenderOptions{
+		RequestedReceiverSettleMode: amqp.ReceiverSettleModeFirst.Ptr(),
+	}
+
+	snd, err := conn.outConnection.NewSender(context.Background(), address, &opts)
+	if err != nil {
 		conn.logger.Metadata(logging.Metadata{
 			"address": fmt.Sprintf("%s/%s", conn.Address, channel),
 			"error":   err,
@@ -279,242 +310,35 @@ func (conn *AMQP10Connector) CreateSender(address string) (*electron.Sender, err
 		conn.logger.Warn("Failed to create sender for given address")
 		return nil, fmt.Errorf("Failed to create sender")
 	}
+
 	conn.senders[channel] = snd
-	return &snd, nil
+	return snd, nil
 }
 
 //---------------------------- reconnect helpers and method ---------------------------
 
-func (conn *AMQP10Connector) processIncomingMessage(msg interface{}, outchan chan interface{}, receiver AMQP10Receiver) {
-	message := AMQP10Message{Address: receiver.Receiver.Source(), Tags: receiver.Tags}
-	switch typedBody := msg.(type) {
-	case amqp.List:
-		conn.logger.Debug("Received message is a list, recursevily diving inside it.")
-		for _, element := range typedBody {
-			conn.processIncomingMessage(element, outchan, receiver)
-		}
-	case amqp.Binary:
-		message.Body = typedBody.String()
-		outchan <- message
-	case string:
-		message.Body = typedBody
-		outchan <- message
-	default:
-		conn.logger.Metadata(map[string]interface{}{
-			"message": typedBody,
-		})
-		conn.logger.Debug("Skipped processing of received AMQP1.0 message with invalid type")
-		outchan <- message
+func (conn *AMQP10Connector) processIncomingMessage(msg []byte, outchan chan interface{}, receiver *amqp.Receiver) {
+	message := AMQP10Message{
+		Address: receiver.Address(),
+		Body:    string(msg),
 	}
+	outchan <- message
 }
 
-func (conn *AMQP10Connector) startReceivers(outchan chan interface{}, wg *sync.WaitGroup) {
-	for _, rcv := range conn.receivers {
-		wg.Add(1)
-		go func(receiver AMQP10Receiver) {
-			defer wg.Done()
-			conn.logger.Metadata(logging.Metadata{
-				"connection": conn.Address,
-				"address":    receiver.Receiver.Source(),
-			})
-			conn.logger.Warn("Created receiver")
-			for {
-				select {
-				case <-conn.interrupt:
-					goto doneReceive
-				default:
-				}
-				if msg, err := receiver.Receiver.Receive(); err == nil {
-					msg.Accept()
-					conn.processIncomingMessage(msg.Message.Body(), outchan, receiver)
-					conn.logger.Debug("Message ACKed")
-				} else if err == electron.Closed {
-					conn.logger.Metadata(map[string]interface{}{
-						"connection": conn.Address,
-						"address":    receiver.Receiver.Source(),
-					})
-					conn.logger.Warn("Channel closed, closing receiver loop")
-					goto doneReceive
-				} else {
-					conn.logger.Metadata(map[string]interface{}{
-						"connection": conn.Address,
-						"address":    receiver.Receiver.Source(),
-						"error":      err,
-					})
-					conn.logger.Error("Received AMQP1.0 error")
-				}
-			}
-
-		doneReceive:
-			conn.logger.Metadata(map[string]interface{}{
-				"connection": conn.Address,
-				"address":    receiver.Receiver.Source(),
-			})
-			conn.logger.Error("Shutting down receiver")
-		}(rcv)
-	}
-}
-
-// Reconnect tries to reconnect connector to configured AMQP1.0 node. Returns nil if failed
-func (conn *AMQP10Connector) Reconnect(connectionType string, outchan chan interface{}, wg *sync.WaitGroup) error {
-	listen := []string{}
-	switch connectionType {
-	case "in":
-		for r := range conn.receivers {
-			// get receiver data
-			tags := strings.Join(conn.receivers[r].Tags, ":")
-			address := conn.receivers[r].Receiver.Source()
-			if len(tags) > 0 {
-				address = strings.Join([]string{address, tags}, ":")
-			}
-			listen = append(listen, address)
-			// close receiver
-			conn.receivers[r].Receiver.Close(nil)
-			for {
-				if err := conn.receivers[r].Receiver.Sync(); err == electron.Closed {
-					break
-				} else {
-					conn.logger.Metadata(map[string]interface{}{
-						"receiver": conn.receivers[r].Receiver,
-					})
-					conn.logger.Debug("Waiting for receiver to be closed")
-					time.Sleep(time.Millisecond)
-				}
-			}
-			conn.logger.Metadata(map[string]interface{}{
-				"receiver": conn.receivers[r].Receiver,
-			})
-			conn.logger.Debug("Closed receiver link")
-		}
-		conn.receivers = []AMQP10Receiver{}
-
-		conn.inConnection.Disconnect(fmt.Errorf("Reconnecting"))
-		conn.inConnection.Wait()
-		conn.logger.Debug("Disconnected incoming connection")
-	case "out":
-		for s := range conn.senders {
-			conn.senders[s].Close(fmt.Errorf("Reconnecting"))
-			delete(conn.senders, s)
-			conn.logger.Metadata(map[string]interface{}{
-				"sender": conn.senders[s],
-			})
-			conn.logger.Debug("Closed sender link")
-		}
-		conn.outConnection.Disconnect(fmt.Errorf("Reconnecting"))
-		conn.outConnection.Wait()
-		conn.logger.Debug("Disconnected outgoing connection")
-	default:
-		return fmt.Errorf("Wrong connection type. Should be 'in' or 'out'")
-	}
-
-	if err := conn.connect(connectionType); err != nil {
-		conn.logger.Metadata(map[string]interface{}{
-			"connection": connectionType,
-			"error":      err,
-		})
-		conn.logger.Error("Failed to reconnect")
-		return err
-	}
-
-	if connectionType == "in" {
-		if err := bindListenChannels(conn, listen); err != nil {
-			return fmt.Errorf("Error while creating receiver links")
-		}
-		conn.logger.Metadata(map[string]interface{}{
-			"receivers": conn.receivers,
-		})
-		conn.logger.Debug("Recreated receiver links")
-		// recreate receiving loops
-		conn.startReceivers(outchan, wg)
-	}
-	return nil
-}
-
-// Disconnect closes connection in both directions
-func (conn *AMQP10Connector) Disconnect() {
-	close(conn.interrupt)
-	time.Sleep(time.Second)
-	conn.inConnection.Disconnect(nil)
-	conn.outConnection.Disconnect(nil)
-	conn.logger.Metadata(map[string]interface{}{
-		"incoming": conn.inConnection,
-		"outgoing": conn.outConnection,
-	})
-	conn.logger.Debug("Closed connections")
-}
-
-//---------------------------- message processing initiation method ----------------------------
-
-// Start starts all processing loops. Channel outchan will contain received AMQP10Message from AMQP1.0 node
-// and through inchan AMQP10Message are sent to configured AMQP1.0 node
-func (conn *AMQP10Connector) Start(outchan chan interface{}, inchan chan interface{}) *sync.WaitGroup {
-	wg := sync.WaitGroup{}
-
-	//create listening goroutine for each receiver
-	conn.startReceivers(outchan, &wg)
-
-	ackchan := make(chan electron.Outcome)
-	linkFail := int64(0)
-	lastAck := int64(0)
-	lfLock := sync.RWMutex{}
-
-	// ACK and error verification goroutine
+func (conn *AMQP10Connector) startSenders(inchan chan interface{}, wg *sync.WaitGroup) {
 	wg.Add(1)
-	go func(ackchan chan electron.Outcome) {
-		defer wg.Done()
-		for {
-			select {
-			case ack := <-ackchan:
-				if ack.Error != nil {
-					lfLock.Lock()
-					linkFail += 1
-					lfLock.Unlock()
-					if ack.Error == electron.Timeout {
-						conn.logger.Metadata(logging.Metadata{
-							"timeout": conn.SendTimeout,
-							"id":      ack.Value,
-						})
-						conn.logger.Error("Was not able to deliver message on time.")
-					} else {
-						conn.logger.Metadata(logging.Metadata{
-							"id":  ack.Value,
-							"err": ack.Error,
-						})
-						conn.logger.Error("Error delivering message.")
-					}
-				} else if ack.Status != 2 {
-					conn.logger.Metadata(logging.Metadata{
-						"id":  ack.Value,
-						"ack": ack.Status,
-					})
-					conn.logger.Warn("Sent message was not ACKed.")
-				} else {
-					lfLock.Lock()
-					linkFail = 0
-					lfLock.Unlock()
-					conn.logger.Metadata(logging.Metadata{
-						"id":  ack.Value,
-						"ack": ack.Status,
-					})
-					lastAck = ack.Value.(int64)
-					conn.logger.Debug("Sent message ACKed.")
-				}
-			case <-conn.interrupt:
-				goto doneAck
-			}
-		}
-	doneAck:
-		conn.logger.Debug("Shutting down ACK check coroutine.")
-	}(ackchan)
-
-	//create sending goroutine
-	wg.Add(1)
-	go func(inchan chan interface{}) {
-
+	go func(conn *AMQP10Connector, inchan chan interface{}) {
 		defer wg.Done()
 
-		timeout := time.Duration(conn.SendTimeout) * time.Second
-		counter := int64(0)
+		lfLock := sync.RWMutex{}
+		sndLock := sync.RWMutex{}
+
+		// number of link failures
+		linkFail := int64(0)
+		// count of active sending coroutines
+		activeSend := int64(0)
+
+		counter := uint64(0)
 		for {
 			lfLock.RLock()
 			failure := linkFail > conn.LinkFailureLimit
@@ -522,23 +346,16 @@ func (conn *AMQP10Connector) Start(outchan chan interface{}, inchan chan interfa
 
 			if failure {
 				conn.logger.Warn("Too many link failures in row, reconnecting")
-				err := conn.Reconnect("out", outchan, &wg)
-				if err != nil {
-					conn.logger.Metadata(logging.Metadata{
-						"error": err,
-					})
-					conn.logger.Error("Unable to send data, shutting down sending loop")
-					goto doneSend
-				}
+				goto reconnectSend
 			}
 
 			select {
 			case msg := <-inchan:
 				switch message := msg.(type) {
 				case AMQP10Message:
-					var sender *electron.Sender
+					var sender *amqp.Sender
 					if s, ok := conn.senders[message.Address]; ok {
-						sender = &s
+						sender = s
 					} else {
 						if s, err := conn.CreateSender(message.Address); err != nil {
 							conn.logger.Metadata(logging.Metadata{
@@ -559,43 +376,63 @@ func (conn *AMQP10Connector) Start(outchan chan interface{}, inchan chan interfa
 							sender = s
 						}
 					}
-					if err := (*sender).Error(); err != nil {
-						// verify sender connection
-						conn.logger.Metadata(logging.Metadata{
-							"cause":   "sender disconnected",
-							"reason":  err,
-							"address": message.Address,
-						})
-						conn.logger.Warn("Skipping processing message")
 
-						lfLock.Lock()
-						linkFail += 1
-						lfLock.Unlock()
-						continue
+					// block if we have too much sending goroutines
+					sndLock.RLock()
+					for activeSend > conn.MaxParalelSendLimit {
+						time.Sleep(time.Second)
 					}
+					sndLock.RUnlock()
 
-					missingAcks := counter - lastAck
-					if missingAcks > conn.LinkFailureLimit {
-						conn.logger.Metadata(logging.Metadata{
-							"count":      missingAcks,
-							"last ACKed": lastAck,
-						})
-						conn.logger.Warn("Multiple results not ACKed. Receiver is probably inaccessible.")
-					}
+					// send message
+					sndLock.Lock()
+					activeSend += int64(1)
+					sndLock.Unlock()
+					message.SetIdFromCounter(&counter)
+					go func(sender *amqp.Sender, msg AMQP10Message, sndLock *sync.RWMutex, lfLock *sync.RWMutex, timeout time.Duration) {
+						ctx, cancel := context.WithTimeout(context.Background(), timeout)
+						defer func(cancel context.CancelFunc) {
+							cancel()
+							sndLock.Lock()
+							activeSend -= int64(1)
+							sndLock.Unlock()
+						}(cancel)
 
-					counter += int64(1)
-					m := amqp.NewMessageWith(message.Body)
-					m.SetMessageId(counter)
-					m.SetContentType("application/json")
+						ctype := "application/json"
+						prop := amqp.MessageProperties{
+							MessageID:   msg.id,
+							ContentType: &ctype,
+						}
+						m := amqp.Message{
+							Properties: &prop,
+							Data:       [][]byte{[]byte(msg.Body)},
+						}
 
-					conn.logger.Metadata(logging.Metadata{
-						"address": message.Address,
-						"message": m,
-					})
-					conn.logger.Debug("Sending AMQP1.0 message")
-					(*sender).SendAsyncTimeout(m, ackchan, m.MessageId(), timeout)
+						msgMeta := logging.Metadata{
+							"id":      msg.id,
+							"address": msg.Address,
+						}
+						conn.logger.Metadata(msgMeta)
+						conn.logger.Debug("Sending message")
+
+						err := sender.Send(ctx, &m, nil)
+						if err != nil {
+							lfLock.Lock()
+							linkFail += 1
+							lfLock.Unlock()
+							msgMeta["reason"] = err.(*amqp.Error).Description
+							conn.logger.Metadata(msgMeta)
+							conn.logger.Warn("Failed to send message")
+
+							msgMeta["message"] = msg.Body
+							msgMeta["error"] = err
+							conn.logger.Metadata(msgMeta)
+							conn.logger.Debug("Send error debug details")
+						}
+					}(sender, message, &sndLock, &lfLock, time.Duration(conn.SendTimeout)*time.Second)
+
 				default:
-					conn.logger.Metadata(map[string]interface{}{
+					conn.logger.Metadata(logging.Metadata{
 						"message": msg,
 					})
 					conn.logger.Debug("Skipped processing of sent AMQP1.0 message with invalid type")
@@ -604,12 +441,160 @@ func (conn *AMQP10Connector) Start(outchan chan interface{}, inchan chan interfa
 				goto doneSend
 			}
 		}
-	doneSend:
-		conn.logger.Debug("Shutting down sending coroutine.")
-		for s := range conn.senders {
-			conn.senders[s].Close(nil)
-		}
-	}(inchan)
 
+	reconnectSend:
+		if err := conn.Reconnect("out", inchan, wg); err != nil {
+			conn.logger.Metadata(logging.Metadata{
+				"error": err,
+			})
+			conn.logger.Error("Failed to reconnect sending loop")
+		}
+
+	doneSend:
+		conn.logger.Info("Shutting down sending loop")
+
+	}(conn, inchan)
+}
+
+func (conn *AMQP10Connector) stopSenders() {
+	ctx, _ := context.WithTimeout(context.Background(), time.Second)
+	for s := range conn.senders {
+		conn.senders[s].Close(ctx)
+		conn.logger.Metadata(map[string]interface{}{
+			"sender": conn.senders[s].Address(),
+		})
+		conn.logger.Debug("Closed sender link")
+	}
+	conn.senders = map[string]*amqp.Sender{}
+}
+
+func (conn *AMQP10Connector) startReceivers(outchan chan interface{}, wg *sync.WaitGroup) {
+	for _, rcv := range conn.receivers {
+		wg.Add(1)
+		go func(receiver *amqp.Receiver) {
+			defer wg.Done()
+
+			connLogMeta := logging.Metadata{
+				"connection": conn.Address,
+				"address":    receiver.Address(),
+			}
+			conn.logger.Metadata(connLogMeta)
+			conn.logger.Warn("Created receiver")
+			for {
+				select {
+				case <-conn.interrupt:
+					goto doneReceive
+				default:
+				}
+				var connErr *amqp.ConnError
+				if msg, err := receiver.Receive(context.Background(), nil); err == nil {
+					receiver.AcceptMessage(context.Background(), msg)
+					conn.processIncomingMessage(msg.GetData(), outchan, receiver)
+					conn.logger.Debug("Message ACKed")
+				} else if errors.As(err, &connErr) {
+					conn.logger.Metadata(connLogMeta)
+					conn.logger.Warn("Channel closed, reconnecting")
+					goto reconnectReceive
+				} else {
+					connLogMeta["err"] = err
+					conn.logger.Metadata(connLogMeta)
+					conn.logger.Error("Received AMQP1.0 error")
+				}
+			}
+
+		reconnectReceive:
+			if err := conn.Reconnect("in", outchan, wg); err != nil {
+				conn.logger.Metadata(logging.Metadata{
+					"error": err,
+				})
+				conn.logger.Error("Failed to reconnect receiver loop")
+			}
+
+		doneReceive:
+			conn.logger.Metadata(connLogMeta)
+			conn.logger.Info("Shutting down receiver loop")
+		}(rcv)
+	}
+}
+
+func (conn *AMQP10Connector) stopReceivers() {
+	ctx, _ := context.WithTimeout(context.Background(), time.Second)
+	for r := range conn.receivers {
+		conn.receivers[r].Close(ctx)
+		conn.logger.Metadata(map[string]interface{}{
+			"receiver": conn.receivers[r].Address(),
+		})
+		conn.logger.Debug("Closed receiver link")
+		delete(conn.receivers, r)
+	}
+}
+
+// Reconnect tries to reconnect connector to configured AMQP1.0 node. Returns nil if failed
+func (conn *AMQP10Connector) Reconnect(connectionType string, msgChannel chan interface{}, wg *sync.WaitGroup) error {
+	ctx := context.Background()
+	listen := []string{}
+	switch connectionType {
+	case "in":
+		for r := range conn.receivers {
+			listen = append(listen, conn.receivers[r].Address())
+		}
+		conn.stopReceivers()
+		conn.inConnection.Close(ctx)
+		conn.logger.Debug("Disconnected incoming connection")
+	case "out":
+		conn.stopSenders()
+		conn.outConnection.Close(ctx)
+		conn.logger.Debug("Disconnected outgoing connection")
+	default:
+		return fmt.Errorf("Wrong connection type. Should be 'in' or 'out'")
+	}
+
+	if err := conn.connect(connectionType); err != nil {
+		conn.logger.Metadata(map[string]interface{}{
+			"connection": connectionType,
+			"error":      err,
+		})
+		conn.logger.Error("Failed to reconnect")
+		return err
+	}
+
+	switch connectionType {
+	case "in":
+		if err := bindListenChannels(conn, listen); err != nil {
+			return fmt.Errorf("Error while creating receiver links")
+		}
+		conn.logger.Metadata(logging.Metadata{
+			"receivers": conn.receivers,
+		})
+		conn.logger.Debug("Recreated receiver links")
+		conn.startReceivers(msgChannel, wg)
+	case "out":
+		conn.startSenders(msgChannel, wg)
+	}
+	return nil
+}
+
+// Disconnect closes connection in both directions
+func (conn *AMQP10Connector) Disconnect() {
+	ctx := context.Background()
+	close(conn.interrupt)
+	time.Sleep(time.Second)
+	conn.inConnection.Close(ctx)
+	conn.outConnection.Close(ctx)
+	conn.logger.Metadata(map[string]interface{}{
+		"incoming": conn.inConnection,
+		"outgoing": conn.outConnection,
+	})
+	conn.logger.Debug("Closed connections")
+}
+
+//---------------------------- message processing initiation method ----------------------------
+
+// Start starts all processing loops. Channel outchan will contain received AMQP10Message from AMQP1.0 node
+// and through inchan AMQP10Message are sent to configured AMQP1.0 node
+func (conn *AMQP10Connector) Start(outchan chan interface{}, inchan chan interface{}) *sync.WaitGroup {
+	wg := sync.WaitGroup{}
+	conn.startReceivers(outchan, &wg)
+	conn.startSenders(inchan, &wg)
 	return &wg
 }
