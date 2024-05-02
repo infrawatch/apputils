@@ -240,11 +240,10 @@ func TestAMQP10SendAndReceiveMessage(t *testing.T) {
 		wg.Wait()
 	})
 
-	t.Run("Test reconnect", func(t *testing.T) {
+	t.Run("Test reconnect of sender", func(t *testing.T) {
 		var wg sync.WaitGroup
 
-		require.NoError(t, conn.Reconnect("in", receiver, cwg))
-		require.NoError(t, conn.Reconnect("out", receiver, cwg))
+		require.NoError(t, conn.Reconnect("out", sender, cwg))
 
 		wg.Add(1)
 		go func() {
@@ -258,16 +257,41 @@ func TestAMQP10SendAndReceiveMessage(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			sender <- amqp10.AMQP10Message{Address: "qdrtest", Body: QDRMsg2}
-			sender <- amqp10.AMQP10Message{Address: "qdrtest", Body: QDRMsg2}
-			sender <- amqp10.AMQP10Message{Address: "qdrtest", Body: QDRMsg2}
+			for i := 0; i < 3; i++ {
+				sender <- amqp10.AMQP10Message{Address: "qdrtest", Body: QDRMsg2}
+			}
 		}()
 
 		wg.Wait()
-		conn.Disconnect()
-		cwg.Wait()
 	})
 
+	t.Run("Test reconnect of receiver", func(t *testing.T) {
+		var wg sync.WaitGroup
+
+		require.NoError(t, conn.Reconnect("in", receiver, cwg))
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 3; i++ {
+				data := <-receiver
+				assert.Equal(t, QDRMsg2, (data.(amqp10.AMQP10Message)).Body)
+			}
+		}()
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 3; i++ {
+				sender <- amqp10.AMQP10Message{Address: "qdrtest", Body: QDRMsg2}
+			}
+		}()
+
+		wg.Wait()
+	})
+
+	conn.Disconnect()
+	cwg.Wait()
 }
 
 func TestLoki(t *testing.T) {
