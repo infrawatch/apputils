@@ -8,8 +8,11 @@ yum install -y epel-release
 # Locale setting in CentOS8 is broken without this package
 yum install -y glibc-langpack-en
 
-# install Go
-yum install -y golang
+# install Go 1.24.13
+GO_VERSION=1.24.13
+curl -L "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -o /tmp/go.tar.gz
+tar -C /usr/local -xzf /tmp/go.tar.gz
+export PATH=/usr/local/go/bin:$PATH
 export GOBIN=$GOPATH/bin
 export PATH=$PATH:$GOBIN
 
