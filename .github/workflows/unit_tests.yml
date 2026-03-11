@@ -31,7 +31,7 @@ on:
 jobs:
   test-framework:
     name: Unit test suite
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout code
@@ -94,7 +94,7 @@ jobs:
       - name: Run unit tests
         run: |
           export PROJECT_ROOT=/root/go/src/github.com/infrawatch/apputils
-          docker run -uroot --network host --volume=${{ github.workspace }}:$PROJECT_ROOT:z --workdir $PROJECT_ROOT quay.io/centos/centos:stream8 bash ci/run_ci.sh
+          docker run -uroot --network host --volume=${{ github.workspace }}:$PROJECT_ROOT:z --workdir $PROJECT_ROOT quay.io/centos/centos:stream9 bash ci/run_ci.sh
       - name: List dependency containers' logs
         run: |
           echo "---- rabbitmq ----"
