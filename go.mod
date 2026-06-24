@@ -1,6 +1,6 @@
 module github.com/infrawatch/apputils
 
-go 1.24
+go 1.25
 
 require (
 	github.com/Azure/go-amqp v1.0.5
